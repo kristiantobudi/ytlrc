@@ -78,6 +78,8 @@ struct App {
     failures: u32,
     next_retry: Option<Instant>,
     manual_lookup: bool,
+    /// Track key the current lyrics (or in-flight lookup) belong to.
+    view_key: Option<String>,
 }
 
 impl App {
@@ -114,6 +116,7 @@ impl App {
             failures: 0,
             next_retry: None,
             manual_lookup: false,
+            view_key: None,
         }
     }
 
@@ -127,7 +130,7 @@ impl App {
         let name = theme::THEMES[index].name;
         config::save_theme(name);
         self.toast = Some((
-            format!("Tema {}/{}: {name}", index + 1, theme::THEMES.len()),
+            format!("Theme {}/{}: {name}", index + 1, theme::THEMES.len()),
             Instant::now(),
         ));
     }
@@ -148,10 +151,20 @@ impl App {
         self.ad = false;
 
         let key = state.track_key();
-        if self.last_key.as_deref() == Some(key.as_str()) {
+        let same_track = self.last_key.as_deref() == Some(key.as_str());
+
+        // Same song and its lyrics are already on screen (or being fetched).
+        if same_track && self.view_key.as_deref() == Some(key.as_str()) {
             return;
         }
 
+        // Either the song changed, or the displayed lyrics no longer belong to
+        // the current track (a stale lookup, a lost update, a live stream that
+        // switched songs). In both cases: start a fresh lookup right away.
+        self.begin_track(&state, key);
+    }
+
+    fn begin_track(&mut self, state: &PlaybackState, key: String) {
         self.last_key = Some(key.clone());
         self.offset = 0.0;
         self.plain_scroll = 0;
@@ -163,7 +176,7 @@ impl App {
         self.channel = state.channel.clone();
 
         let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
-        // YouTube Music memberi artis yang sudah bersih di mediaSession.
+        // YouTube Music exposes a clean artist name through mediaSession.
         if state.source.contains("music") {
             if let Some(artist) = state
                 .artist
@@ -180,7 +193,7 @@ impl App {
             loading: true,
             track: parsed.track.clone(),
             artist: parsed.artist.clone(),
-            status: "mencari lirik…".to_string(),
+            status: "searching lyrics…".to_string(),
             ..Default::default()
         };
 
@@ -200,19 +213,27 @@ impl App {
         if self.manual_lookup || self.ad || self.waiting {
             return;
         }
-        let Some(retry_at) = self.next_retry else { return };
+        let Some(retry_at) = self.next_retry else {
+            return;
+        };
         if Instant::now() < retry_at {
             return;
         }
         self.next_retry = None;
 
-        let Some(key) = self.last_key.clone() else { return };
-        let Some(parsed) = self.query.clone() else { return };
-        let Some(state) = self.playback.lock().unwrap().clone() else { return };
+        let Some(key) = self.last_key.clone() else {
+            return;
+        };
+        let Some(parsed) = self.query.clone() else {
+            return;
+        };
+        let Some(state) = self.playback.lock().unwrap().clone() else {
+            return;
+        };
 
         self.lyrics.loading = true;
         self.lyrics.error = None;
-        self.lyrics.status = "mencari ulang…".to_string();
+        self.lyrics.status = "retrying…".to_string();
 
         self.start_fetch(
             key,
@@ -228,7 +249,7 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn start_fetch(
-        &self,
+        &mut self,
         key: String,
         parsed: ParsedTrack,
         video_id: String,
@@ -240,6 +261,7 @@ impl App {
     ) {
         let cache = self.cache.clone();
         let tx = self.tx.clone();
+        self.view_key = Some(key.clone());
 
         tokio::spawn(async move {
             let request = lyrics::Lookup {
@@ -257,9 +279,15 @@ impl App {
     }
 
     fn refetch(&mut self, use_cache: bool) {
-        let Some(parsed) = self.query.clone() else { return };
-        let Some(state) = self.playback.lock().unwrap().clone() else { return };
-        let Some(key) = self.last_key.clone() else { return };
+        let Some(parsed) = self.query.clone() else {
+            return;
+        };
+        let Some(state) = self.playback.lock().unwrap().clone() else {
+            return;
+        };
+        let Some(key) = self.last_key.clone() else {
+            return;
+        };
 
         if !use_cache {
             self.cache
@@ -270,7 +298,7 @@ impl App {
         self.next_retry = None;
         self.lyrics.loading = true;
         self.lyrics.error = None;
-        self.lyrics.status = "mencari lirik…".to_string();
+        self.lyrics.status = "searching lyrics…".to_string();
         self.start_fetch(
             key,
             parsed,
@@ -281,7 +309,7 @@ impl App {
             self.raw_title.clone(),
             self.channel.clone(),
         );
-        self.toast = Some(("Mengambil ulang lirik…".to_string(), Instant::now()));
+        self.toast = Some(("Refetching lyrics…".to_string(), Instant::now()));
     }
 
     fn submit_manual(&mut self, text: &str) {
@@ -291,13 +319,13 @@ impl App {
         }
 
         let Some(key) = self.last_key.clone() else {
-            self.toast = Some(("Belum ada lagu yang terdeteksi.".to_string(), Instant::now()));
+            self.toast = Some(("No track detected yet.".to_string(), Instant::now()));
             return;
         };
 
         let mut parsed = title::parse_title(text, None);
         if !text.contains(" - ") && !text.contains(" – ") && !text.contains(" — ") {
-            // Tanpa pemisah, biarkan pencarian bebas berdasarkan judul.
+            // Without a separator, treat the input as a free-text title search.
             parsed.artist.clear();
         }
         self.query = Some(parsed.clone());
@@ -326,10 +354,19 @@ impl App {
             loading: true,
             track: parsed.track.clone(),
             artist: parsed.artist.clone(),
-            status: "mencari lirik…".to_string(),
+            status: "searching lyrics…".to_string(),
             ..Default::default()
         };
-        self.start_fetch(key, parsed, video_id, duration, false, true, text.to_string(), None);
+        self.start_fetch(
+            key,
+            parsed,
+            video_id,
+            duration,
+            false,
+            true,
+            text.to_string(),
+            None,
+        );
     }
 
     fn on_event(&mut self, event: Event) {
@@ -350,7 +387,11 @@ impl App {
 
                 self.failures = 0;
                 self.next_retry = None;
-                self.mode = if found.synced { Mode::Synced } else { Mode::Plain };
+                self.mode = if found.synced {
+                    Mode::Synced
+                } else {
+                    Mode::Plain
+                };
                 self.plain_scroll = 0;
                 self.lyrics = LyricsView {
                     loading: false,
@@ -371,7 +412,7 @@ impl App {
                     loading: false,
                     track,
                     artist,
-                    status: "tidak ditemukan".to_string(),
+                    status: "not found".to_string(),
                     error: Some(message),
                     ..Default::default()
                 };
@@ -407,7 +448,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// `true` berarti keluar.
+    /// Returns `true` when the app should exit.
     fn on_key(&mut self, key: KeyEvent) -> bool {
         if self.input.is_some() {
             let mut close = false;
@@ -488,7 +529,7 @@ impl App {
         let area = frame.area();
         if area.height < 8 || area.width < 20 {
             frame.render_widget(
-                Paragraph::new("Terminal terlalu kecil. Perbesar jendela."),
+                Paragraph::new("Terminal too small. Please resize the window."),
                 area,
             );
             return;
@@ -509,16 +550,16 @@ impl App {
 
     fn status_text(&self) -> String {
         if self.ad {
-            return "IKLAN".to_string();
+            return "AD".to_string();
         }
         if self.waiting {
-            return "MENUNGGU".to_string();
+            return "WAITING".to_string();
         }
 
         let mut status = self.lyrics.status.to_uppercase();
         if let Some(retry_at) = self.next_retry {
             let seconds = retry_at.saturating_duration_since(Instant::now()).as_secs();
-            status = format!("{status} · COBA LAGI {seconds}s");
+            status = format!("{status} · RETRY {seconds}s");
         }
         status
     }
@@ -544,7 +585,7 @@ impl App {
     fn render_header(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {
         let theme = self.theme();
         let (icon, title) = if self.ad {
-            ("▶", "IKLAN".to_string())
+            ("▶", "Ad".to_string())
         } else if !self.lyrics.track.is_empty() {
             let icon = if state.map(|st| st.paused).unwrap_or(false) {
                 "❚❚"
@@ -558,7 +599,7 @@ impl App {
         } else if let Some(state) = state {
             ("▶", state.title.clone())
         } else {
-            ("·", "Menunggu YouTube…".to_string())
+            ("·", "Waiting for YouTube…".to_string())
         };
 
         let status = self.status_text();
@@ -568,21 +609,21 @@ impl App {
         let pad = area
             .width
             .saturating_sub(left.chars().count() as u16 + status.chars().count() as u16 + 2)
-            .max(0) as usize;
+            as usize;
 
         let mut subtitle = String::new();
         if let Some(state) = state {
             subtitle.push_str(&format!("{}  •  {}", state.source, state.video_id));
             if state.paused {
-                subtitle.push_str("  •  dijeda");
+                subtitle.push_str("  •  paused");
             }
         } else {
-            subtitle.push_str("belum ada data dari browser extension");
+            subtitle.push_str("no data from the browser extension yet");
         }
         if self.waiting && state.is_some() {
-            subtitle.push_str("  •  tidak ada update >20 detik");
+            subtitle.push_str("  •  no update for >20s");
         }
-        subtitle.push_str(&format!("  •  tema {}", theme.name));
+        subtitle.push_str(&format!("  •  theme {}", theme.name));
 
         let header = Paragraph::new(vec![
             Line::from(vec![
@@ -593,9 +634,7 @@ impl App {
                 Span::raw(" ".repeat(pad)),
                 Span::styled(
                     status,
-                    Style::new()
-                        .fg(status_color)
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().fg(status_color).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(Span::styled(subtitle, Style::new().fg(theme.hint))),
@@ -618,7 +657,7 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "⏸  Iklan sedang diputar — lirik dijeda.",
+                        "⏸  Advertisement playing — lyrics paused.",
                         Style::new().fg(theme.warn),
                     )),
                 ])
@@ -634,17 +673,15 @@ impl App {
                     Line::from(""),
                     Line::from(Span::styled(
                         "Menunggu YouTube…",
-                        Style::new()
-                            .fg(theme.title)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        "Buka youtube.com atau music.youtube.com, lalu pastikan extension",
+                        "Open youtube.com or music.youtube.com and make sure the extension",
                         Style::new().fg(theme.hint),
                     )),
                     Line::from(Span::styled(
-                        "\"ytlrc bridge\" aktif dan daemon berjalan di port 8765.",
+                        "\"ytlrc bridge\" is enabled and the daemon is running on port 8765.",
                         Style::new().fg(theme.hint),
                     )),
                 ])
@@ -659,7 +696,10 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        format!("Mencari lirik: {} — {}", self.lyrics.artist, self.lyrics.track),
+                        format!(
+                            "Searching lyrics: {} — {}",
+                            self.lyrics.artist, self.lyrics.track
+                        ),
                         Style::new().fg(theme.accent),
                     )),
                 ])
@@ -673,21 +713,17 @@ impl App {
             let retry_hint = match self.next_retry {
                 Some(retry_at) => {
                     let seconds = retry_at.saturating_duration_since(Instant::now()).as_secs();
-                    format!(
-                        "Mencari ulang otomatis dalam {seconds} detik…  (r = sekarang, m = manual)"
-                    )
+                    format!("Retrying automatically in {seconds}s…  (r = now, m = manual)")
                 }
-                None => "Tekan r untuk ulangi atau m untuk cari manual.".to_string(),
+                None => "Press r to retry or m to search manually.".to_string(),
             };
 
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "Lirik tidak ditemukan.",
-                        Style::new()
-                            .fg(theme.warn)
-                            .add_modifier(Modifier::BOLD),
+                        "Lyrics not found.",
+                        Style::new().fg(theme.warn).add_modifier(Modifier::BOLD),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(error.clone(), Style::new().fg(theme.text))),
@@ -712,12 +748,12 @@ impl App {
                 Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "Lirik tidak tersedia.",
+                        "No lyrics available.",
                         Style::new().fg(theme.text),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        "Tekan r untuk ulangi atau m untuk cari manual.",
+                        "Press r to retry or m to search manually.",
                         Style::new().fg(theme.hint),
                     )),
                 ])
@@ -728,9 +764,7 @@ impl App {
         }
 
         let height = area.height as usize;
-        let start = self
-            .plain_scroll
-            .min(lines.len().saturating_sub(height).max(0));
+        let start = self.plain_scroll.min(lines.len().saturating_sub(height));
         let visible: Vec<Line> = lines
             .iter()
             .skip(start)
@@ -784,9 +818,7 @@ impl App {
                     line.text.clone()
                 };
                 let style = if is_active {
-                    Style::new()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD)
+                    Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
                 } else if is_past {
                     Style::new().fg(theme.past)
                 } else {
@@ -818,10 +850,7 @@ impl App {
         );
         let gauge = LineGauge::default()
             .ratio(ratio)
-            .label(Line::from(Span::styled(
-                label,
-                Style::new().fg(theme.text),
-            )))
+            .label(Line::from(Span::styled(label, Style::new().fg(theme.text))))
             .filled_style(Style::new().fg(theme.accent))
             .unfilled_style(Style::new().fg(theme.gauge_track));
 
@@ -829,12 +858,9 @@ impl App {
         frame.render_widget(gauge, rows[0]);
 
         if let Some(buffer) = &self.input {
-            let text = format!("Cari lirik (Artis - Judul): {buffer}█");
+            let text = format!("Search lyrics (Artist - Title): {buffer}█");
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    text,
-                    Style::new().fg(theme.warn),
-                ))),
+                Paragraph::new(Line::from(Span::styled(text, Style::new().fg(theme.warn)))),
                 rows[1],
             );
             return;
@@ -852,7 +878,7 @@ impl App {
 
         let keys = if hint.is_empty() {
             format!(
-                "q keluar · +/- offset · p synced/plain · t tema ({}) · r ulangi · m cari · ↑↓ scroll",
+                "q quit · +/- offset · p synced/plain · t theme ({}) · r retry · m search · ↑↓ scroll",
                 theme.name
             )
         } else {
@@ -881,7 +907,7 @@ impl App {
     }
 }
 
-/// Jeda sebelum pencarian otomatis berikutnya (detik).
+/// Delay before the next automatic lookup attempt, in seconds.
 fn retry_delay(failures: u32) -> u64 {
     match failures {
         0 => 8,
@@ -947,8 +973,8 @@ pub async fn run(
     Ok(())
 }
 
-/// Mode tanpa TUI: cetak baris lirik aktif ke stdout. Berguna untuk debugging
-/// dan untuk dipakai di script/streaming.
+/// Headless mode: print the active lyric line to stdout. Useful for debugging
+/// and for scripts or stream overlays.
 pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()> {
     let mut last_key: Option<String> = None;
     let mut lyrics: Option<lyrics::FoundLyrics> = None;
@@ -1009,7 +1035,7 @@ pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()
                     lyrics = Some(found);
                 }
                 FetchOutcome::NotFound(message) => {
-                    println!("  (lirik tidak ditemukan: {message})");
+                    println!("  (lyrics not found: {message})");
                     lyrics = None;
                 }
                 FetchOutcome::Error(message) => {
@@ -1027,7 +1053,9 @@ pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()
         }
 
         let pos_ms = (state.position_now() * 1000.0).round() as i64 + found.offset_ms;
-        let Some(index) = lrc::active_index(&found.lines, pos_ms) else { continue };
+        let Some(index) = lrc::active_index(&found.lines, pos_ms) else {
+            continue;
+        };
         let text = if found.lines[index].text.trim().is_empty() {
             "♪".to_string()
         } else {

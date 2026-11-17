@@ -39,19 +39,38 @@ pub fn router(playback: PlaybackRef, version: &'static str) -> Router {
 async fn post_state(State(ctx): State<Ctx>, Json(update): Json<StateUpdate>) -> Response {
     let mut guard = ctx.playback.lock().unwrap();
 
-    // Saat iklan, jangan ganti lagu / posisi: cukup tandai sedang iklan.
+    // While an ad is playing, keep the current song and position so the
+    // lyrics do not jump to the ad. If the track itself changed (for example
+    // the viewer skipped to the next song during an ad), accept the new track
+    // right away instead of freezing the old lyrics forever.
     if update.is_ad {
-        if let Some(prev) = guard.as_mut() {
+        let Some(next) = PlaybackState::from_update(update) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": "empty state" })),
+            )
+                .into_response();
+        };
+
+        let changed = guard
+            .as_ref()
+            .map(|prev| prev.track_key() != next.track_key())
+            .unwrap_or(true);
+
+        if changed {
+            *guard = Some(next);
+        } else if let Some(prev) = guard.as_mut() {
             prev.is_ad = true;
             prev.received_at = Instant::now();
         }
+
         return (StatusCode::OK, Json(json!({ "ok": true, "ad": true }))).into_response();
     }
 
     let Some(next) = PlaybackState::from_update(update) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "ok": false, "error": "state kosong" })),
+            Json(json!({ "ok": false, "error": "empty state" })),
         )
             .into_response();
     };
@@ -73,11 +92,7 @@ async fn get_state(State(ctx): State<Ctx>) -> Response {
     let snapshot = ctx.playback.lock().unwrap().clone();
     match snapshot {
         Some(state) => (StatusCode::OK, Json(state.view())).into_response(),
-        None => (
-            StatusCode::OK,
-            Json(json!({ "ok": true, "state": null })),
-        )
-            .into_response(),
+        None => (StatusCode::OK, Json(json!({ "ok": true, "state": null }))).into_response(),
     }
 }
 

@@ -1,6 +1,7 @@
-[build]
-target = "x86_64-unknown-linux-musl"
-
 [target.x86_64-unknown-linux-musl]
+linker = "ld.lld"
+rustflags = ["-C", "linker-flavor=ld.lld"]
+
+[target.aarch64-unknown-linux-musl]
 linker = "ld.lld"
 rustflags = ["-C", "linker-flavor=ld.lld"]

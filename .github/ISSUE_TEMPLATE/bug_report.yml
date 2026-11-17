@@ -1,0 +1,97 @@
+name: Bug report
+description: Report a bug or unexpected behaviour in ytlrc.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill in as much detail as you can —
+        especially the OS, terminal, and whether the daemon runs natively or in WSL.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start `ytlrc --bind 0.0.0.0`
+        2. Play https://www.youtube.com/watch?v=...
+        3. Switch to another video
+        4. ...
+    validations:
+      required: true
+  - type: input
+    id: video-url
+    attributes:
+      label: YouTube URL (if relevant)
+      description: The video where the problem occurs.
+      placeholder: https://www.youtube.com/watch?v=...
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows + WSL2
+        - Ubuntu / Debian
+        - Fedora / Arch / other Linux
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options:
+        - Chrome
+        - Edge
+        - Brave
+        - Chromium
+        - Other Chromium browser
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ytlrc version
+      description: Output of `ytlrc --version`.
+      placeholder: ytlrc 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      placeholder: Windows Terminal 1.21, iTerm2 3.5, GNOME Terminal 3.52, ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Daemon output, extension service-worker errors, or a screenshot of the TUI.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have read the troubleshooting section in the README.
+          required: true
+        - label: I am running the latest release.
+          required: true
+        - label: This is not a security issue (those go through SECURITY.md).
+          required: true

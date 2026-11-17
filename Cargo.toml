@@ -1,9 +1,16 @@
 [package]
 name = "ytlrc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "YouTube now-playing lyrics daemon + terminal UI"
+rust-version = "1.88"
+description = "Synced YouTube lyrics in your terminal: a lightweight Rust daemon plus browser extension"
+authors = ["ytlrc contributors"]
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/kristiantobudi/ytlrc"
+homepage = "https://github.com/kristiantobudi/ytlrc"
+keywords = ["youtube", "lyrics", "lrc", "tui", "music"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [dependencies]
 anyhow = "1"

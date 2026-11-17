@@ -1,4 +1,7 @@
 /target
 /ytlrc
+/ytlrc.exe
+*.pdb
 *.log
 .DS_Store
+Thumbs.db

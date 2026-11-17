@@ -1,6 +1,6 @@
-//! Client LRCLIB. Sengaja memakai `curl` (bukan TLS stack di dalam binary)
-//! supaya build tetap ringan & tidak butuh C toolchain. `curl` tersedia di
-//! WSL, hampir semua distro Linux, dan Windows 10+.
+//! LRCLIB client. It deliberately shells out to `curl` instead of linking a
+//! TLS stack, which keeps the binary small and avoids a C toolchain. `curl` is
+//! available on WSL, almost every Linux distribution, and Windows 10+.
 
 use std::process::Stdio;
 
@@ -10,7 +10,7 @@ use tokio::process::Command;
 pub const USER_AGENT: &str = concat!(
     "ytlrc/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/kristianto/ytlrc)"
+    " (https://github.com/kristiantobudi/ytlrc)"
 );
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -52,7 +52,8 @@ pub async fn lookup(artist: &str, track: &str, duration: f64) -> anyhow::Result<
     search(artist, track, duration).await
 }
 
-async fn get(artist: &str, track: &str, duration: f64) -> anyhow::Result<Option<Record>> {    let mut url = format!(
+async fn get(artist: &str, track: &str, duration: f64) -> anyhow::Result<Option<Record>> {
+    let mut url = format!(
         "https://lrclib.net/api/get?artist_name={}&track_name={}",
         urlencode(artist),
         urlencode(track)
@@ -64,8 +65,10 @@ async fn get(artist: &str, track: &str, duration: f64) -> anyhow::Result<Option<
     match http_get(&url).await? {
         (200, body) => Ok(serde_json::from_str(&body).ok()),
         (400 | 404, _) => Ok(None),
-        (429, _) => anyhow::bail!("LRCLIB sedang membatasi request (429). Coba lagi sebentar."),
-        (status, body) => anyhow::bail!("LRCLIB mengembalikan {}: {}", status, short(&body)),
+        (429, _) => {
+            anyhow::bail!("LRCLIB is rate limiting requests (429). Please try again shortly.")
+        }
+        (status, body) => anyhow::bail!("LRCLIB returned {}: {}", status, short(&body)),
     }
 }
 
@@ -82,8 +85,10 @@ pub async fn search(artist: &str, track: &str, duration: f64) -> anyhow::Result<
             Ok(best_match(records, track, artist, duration))
         }
         (400 | 404, _) => Ok(None),
-        (429, _) => anyhow::bail!("LRCLIB sedang membatasi request (429). Coba lagi sebentar."),
-        (status, body) => anyhow::bail!("LRCLIB mengembalikan {}: {}", status, short(&body)),
+        (429, _) => {
+            anyhow::bail!("LRCLIB is rate limiting requests (429). Please try again shortly.")
+        }
+        (status, body) => anyhow::bail!("LRCLIB returned {}: {}", status, short(&body)),
     }
 }
 
@@ -94,7 +99,11 @@ fn best_match(records: Vec<Record>, track: &str, artist: &str, duration: f64) ->
 
     for record in records {
         let score = score(&record, &wanted, &wanted_artist, duration);
-        if best.as_ref().map(|(best_score, _)| score > *best_score).unwrap_or(true) {
+        if best
+            .as_ref()
+            .map(|(best_score, _)| score > *best_score)
+            .unwrap_or(true)
+        {
             best = Some((score, record));
         }
     }
@@ -120,7 +129,9 @@ fn score(record: &Record, wanted: &str, wanted_artist: &str, duration: f64) -> f
         if !record_artist.is_empty() {
             if record_artist == *wanted_artist {
                 score += 40.0;
-            } else if record_artist.contains(wanted_artist) || wanted_artist.contains(&record_artist) {
+            } else if record_artist.contains(wanted_artist)
+                || wanted_artist.contains(&record_artist)
+            {
                 score += 20.0;
             }
         }
@@ -160,17 +171,17 @@ async fn http_get(url: &str) -> anyhow::Result<(u16, String)> {
         .stdin(Stdio::null())
         .output()
         .await
-        .map_err(|err| anyhow::anyhow!("curl tidak bisa dijalankan: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("failed to run curl: {err}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("curl gagal: {}", stderr.trim());
+        anyhow::bail!("curl failed: {}", stderr.trim());
     }
 
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     let (body, status) = text
         .rsplit_once('\n')
-        .ok_or_else(|| anyhow::anyhow!("respons curl tidak valid"))?;
+        .ok_or_else(|| anyhow::anyhow!("invalid curl response"))?;
     let status = status.trim().parse::<u16>().unwrap_or(0);
     Ok((status, body.to_string()))
 }

@@ -1,8 +1,21 @@
 {
   "manifest_version": 3,
   "name": "ytlrc bridge",
-  "version": "0.1.0",
-  "description": "Kirim lagu dan posisi playback YouTube ke daemon ytlrc di localhost.",
+  "version": "0.2.0",
+  "description": "Sends the YouTube track and playback position to the local ytlrc daemon.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "ytlrc bridge",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
   "permissions": ["tabs"],
   "host_permissions": [
     "http://127.0.0.1:8765/*",

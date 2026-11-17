@@ -83,7 +83,7 @@ pub const THEMES: [Theme; 5] = [
     },
 ];
 
-/// Terima nama theme (tidak peka huruf besar/kecil) atau nomor 1–5.
+/// Accept a theme name (case-insensitive) or a number 1–5.
 pub fn by_name(name: &str) -> Option<usize> {
     let wanted = name.trim().to_ascii_lowercase();
     THEMES
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(by_name("  NORD "), Some(2));
         assert_eq!(by_name("5"), Some(4));
         assert_eq!(by_name("0"), None);
-        assert_eq!(by_name("tidak-ada"), None);
+        assert_eq!(by_name("missing"), None);
     }
 
     #[test]
@@ -126,7 +126,7 @@ mod tests {
             for other in &THEMES[index + 1..] {
                 assert_ne!(
                     theme.accent, other.accent,
-                    "tema {} dan {} punya aksen sama",
+                    "themes {} and {} share the same accent",
                     theme.name, other.name
                 );
             }

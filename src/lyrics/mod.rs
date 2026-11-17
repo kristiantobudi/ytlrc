@@ -1,6 +1,6 @@
 pub mod cache;
-pub mod lrclib;
 pub mod lrc;
+pub mod lrclib;
 pub mod title;
 
 use cache::{Cache, CachedRecord, Entry};
@@ -24,7 +24,7 @@ pub enum FetchOutcome {
     Error(String),
 }
 
-/// Permintaan pencarian lirik. `deep` menambah strategi query cadangan.
+/// Lyrics lookup request. `deep` enables additional fallback queries.
 pub struct Lookup<'a> {
     pub video_id: &'a str,
     pub parsed: &'a ParsedTrack,
@@ -92,12 +92,12 @@ pub async fn fetch(cache: &Cache, request: &Lookup<'_>) -> FetchOutcome {
     }
 
     if let Some(error) = last_error {
-        // Error jaringan/rate-limit tidak di-cache supaya bisa dicoba lagi.
+        // Network/rate-limit errors are not cached so the next attempt can retry.
         return FetchOutcome::Error(error);
     }
 
     let message = format!(
-        "Tidak ada lirik untuk \"{}\" — {}",
+        "No lyrics found for \"{}\" — {}",
         request.parsed.track, request.parsed.artist
     );
     cache.put(
@@ -148,7 +148,7 @@ fn build(record: CachedRecord, cached: bool) -> FoundLyrics {
         .unwrap_or(true)
         && lines.is_empty()
     {
-        plain = Some("♪  (instrumental / tanpa lirik)".to_string());
+        plain = Some("♪  (instrumental / no lyrics)".to_string());
     }
 
     FoundLyrics {

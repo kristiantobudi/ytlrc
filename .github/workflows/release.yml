@@ -1,0 +1,84 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: ytlrc-linux-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: ytlrc-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset: ytlrc-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: ytlrc-windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install static toolchain (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools lld
+
+      - name: Build (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (other targets)
+        if: matrix.target != 'x86_64-unknown-linux-musl'
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.target }}/release/ytlrc"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            src="${src}.exe"
+          fi
+          cp "$src" "${{ matrix.asset }}"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+          generate_release_notes: true
+
+  extension:
+    name: extension bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip extension
+        run: |
+          cd extension
+          zip -r ../ytlrc-extension.zip .
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ytlrc-extension.zip

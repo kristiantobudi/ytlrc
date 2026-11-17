@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-/// Payload yang dikirim browser extension lewat `POST /state`.
+/// Payload sent by the browser extension through `POST /state`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StateUpdate {
@@ -19,7 +19,7 @@ pub struct StateUpdate {
     pub source: Option<String>,
 }
 
-/// State playback yang disimpan daemon, lengkap dengan waktu terima.
+/// Playback state stored by the daemon, including the receive timestamp.
 #[derive(Debug, Clone)]
 pub struct PlaybackState {
     pub video_id: String,
@@ -44,10 +44,24 @@ impl PlaybackState {
         Some(Self {
             video_id,
             title,
-            artist: update.artist.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            channel: update.channel.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            duration: if update.duration.is_finite() { update.duration.max(0.0) } else { 0.0 },
-            position: if update.position.is_finite() { update.position.max(0.0) } else { 0.0 },
+            artist: update
+                .artist
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            channel: update
+                .channel
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            duration: if update.duration.is_finite() {
+                update.duration.max(0.0)
+            } else {
+                0.0
+            },
+            position: if update.position.is_finite() {
+                update.position.max(0.0)
+            } else {
+                0.0
+            },
             paused: update.paused,
             is_ad: update.is_ad,
             source: update.source.unwrap_or_else(|| "youtube".to_string()),
@@ -55,7 +69,7 @@ impl PlaybackState {
         })
     }
 
-    /// Posisi lagu saat ini, diekstrapolasi dari update terakhir.
+    /// Current playback position, extrapolated from the last update.
     pub fn position_now(&self) -> f64 {
         if self.paused || self.is_ad {
             return self.position;
@@ -68,24 +82,31 @@ impl PlaybackState {
         }
     }
 
-    /// Identitas track; dipakai untuk mendeteksi pergantian lagu.
+    /// Track identity, used to detect song changes.
     ///
-    /// Selain video ID, judul ikut dihitung supaya live stream / premiere yang
-    /// berganti lagu tanpa berganti video tetap memicu pencarian lirik baru.
+    /// For normal videos the video id plus the title is enough; the title is
+    /// included so live streams or premieres switch lyrics even when the video
+    /// stays the same. Without a video id, artist and title are both used.
     pub fn track_key(&self) -> String {
-        let fingerprint: String = format!(
-            "{}|{}",
-            self.artist.as_deref().unwrap_or("").to_lowercase(),
-            self.title.to_lowercase()
-        )
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
+        let fingerprint: String = self
+            .title
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect();
 
         if !self.video_id.is_empty() {
             format!("v:{}|{}", self.video_id, fingerprint)
         } else {
-            format!("t:{}", fingerprint)
+            let artist: String = self
+                .artist
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect();
+            format!("t:{}|{}", artist, fingerprint)
         }
     }
 
@@ -150,6 +171,15 @@ mod tests {
     fn track_key_ignores_punctuation_and_case() {
         let first = state("abc", "Hello, World!");
         let second = state("abc", "hello world");
+        assert_eq!(first.track_key(), second.track_key());
+    }
+
+    #[test]
+    fn track_key_ignores_artist_when_video_id_is_known() {
+        let mut first = state("abc", "Song");
+        let mut second = state("abc", "Song");
+        first.artist = Some("Channel A".to_string());
+        second.artist = Some("Channel B".to_string());
         assert_eq!(first.track_key(), second.track_key());
     }
 }

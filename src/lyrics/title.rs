@@ -1,4 +1,4 @@
-//! Membersihkan judul YouTube dan menebak pasangan artis/judul.
+//! Cleans up YouTube titles and guesses the artist/title pair.
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParsedTrack {
@@ -100,16 +100,20 @@ fn choose_sides<'a>(left: &'a str, right: &'a str, channel: &str) -> (&'a str, &
     let left_norm = normalize(left);
     let right_norm = normalize(right);
 
-    if !left_norm.is_empty() && (channel_norm.contains(&left_norm) || left_norm.contains(&channel_norm)) {
+    if !left_norm.is_empty()
+        && (channel_norm.contains(&left_norm) || left_norm.contains(&channel_norm))
+    {
         return (left, right);
     }
-    if !right_norm.is_empty() && (channel_norm.contains(&right_norm) || right_norm.contains(&channel_norm)) {
+    if !right_norm.is_empty()
+        && (channel_norm.contains(&right_norm) || right_norm.contains(&channel_norm))
+    {
         return (right, left);
     }
     (left, right)
 }
 
-/// Kandidat query untuk pencarian otomatis saat hasil pertama gagal.
+/// Query candidates for the automatic lookup retries.
 pub fn search_candidates(raw_title: &str, channel: Option<&str>) -> Vec<ParsedTrack> {
     let base = parse_title(raw_title, channel);
     let mut list = Vec::new();
@@ -125,7 +129,7 @@ pub fn search_candidates(raw_title: &str, channel: Option<&str>) -> Vec<ParsedTr
 
     let primary = base
         .artist
-        .split(|c| matches!(c, '&' | ',' | '/' | ';' | '+'))
+        .split(['&', ',', '/', ';', '+'])
         .next()
         .unwrap_or("")
         .trim();
@@ -133,7 +137,7 @@ pub fn search_candidates(raw_title: &str, channel: Option<&str>) -> Vec<ParsedTr
         push_unique(&mut list, primary, &base.track);
     }
 
-    // Pencarian judul saja: LRCLIB tetap memberi skor berdasarkan durasi.
+    // Title-only search: LRCLIB still scores results using the duration.
     push_unique(&mut list, "", &base.track);
 
     let without_groups = strip_parenthetical(&base.track);
@@ -141,7 +145,7 @@ pub fn search_candidates(raw_title: &str, channel: Option<&str>) -> Vec<ParsedTr
         push_unique(&mut list, &base.artist, &without_groups);
     }
 
-    // Judul mentah yang sudah dibersihkan sebagai pencarian bebas terakhir.
+    // Cleaned raw title as the last free-text search.
     push_unique(&mut list, "", &clean_title(raw_title));
 
     list
@@ -182,7 +186,10 @@ fn split_pair(text: &str) -> Option<(&str, &str)> {
 
     for separator in SEPARATORS {
         if let Some(index) = text.find(separator) {
-            if best.map(|(best_index, _)| index < best_index).unwrap_or(true) {
+            if best
+                .map(|(best_index, _)| index < best_index)
+                .unwrap_or(true)
+            {
                 best = Some((index, separator.len()));
             }
         }
@@ -209,9 +216,16 @@ fn is_noise_group(group: &str) -> bool {
     if lower.contains("remix") || lower.contains("acoustic") || lower.contains("live") {
         return false;
     }
-    if ["music video", "m/v", "color coded", "sped up", "nightcore", "lyric video"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    if [
+        "music video",
+        "m/v",
+        "color coded",
+        "sped up",
+        "nightcore",
+        "lyric video",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
     {
         return true;
     }
@@ -382,7 +396,7 @@ mod tests {
         let total = keys.len();
         keys.sort();
         keys.dedup();
-        assert_eq!(total, keys.len(), "kandidat duplikat: {keys:?}");
+        assert_eq!(total, keys.len(), "duplicate candidates: {keys:?}");
     }
 
     #[test]

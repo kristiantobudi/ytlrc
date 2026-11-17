@@ -26,32 +26,37 @@ async fn main() -> Result<()> {
     let playback = Arc::new(Mutex::new(None));
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", options.bind, options.port))
         .await
-        .with_context(|| format!("gagal bind {}:{} (port dipakai?)", options.bind, options.port))?;
+        .with_context(|| {
+            format!(
+                "failed to bind {}:{} (is the port already in use?)",
+                options.bind, options.port
+            )
+        })?;
     let address = listener.local_addr()?;
 
     let app = server::router(playback.clone(), env!("CARGO_PKG_VERSION"));
     eprintln!(
-        "ytlrc v{} — daemon siap di http://{} (bind {})",
+        "ytlrc v{} — daemon listening on http://{} (bind {})",
         env!("CARGO_PKG_VERSION"),
         address,
         options.bind
     );
-    eprintln!("POST /state dari extension · GET /health untuk cek status");
+    eprintln!("POST /state from the extension · GET /health for status");
 
     tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {
-            eprintln!("server berhenti: {error}");
+            eprintln!("server stopped: {error}");
         }
     });
 
     let cache = lyrics::cache::Cache::new()?;
-    eprintln!("cache lirik: {}", cache.dir().display());
+    eprintln!("lyrics cache: {}", cache.dir().display());
 
     if options.print {
-        eprintln!("mode --print aktif (Ctrl+C untuk berhenti)");
+        eprintln!("--print mode active (Ctrl+C to stop)");
         ui::run_print(playback, cache).await?;
     } else {
-        eprintln!("tekan q untuk keluar · t untuk ganti tema");
+        eprintln!("press q to quit · t to switch theme");
         ui::run(playback, cache, options.theme).await?;
     }
 
@@ -59,7 +64,7 @@ async fn main() -> Result<()> {
 }
 
 fn parse_args() -> Result<Option<Options>> {
-    let mut bind = "0.0.0.0".to_string();
+    let mut bind = "127.0.0.1".to_string();
     let mut port = 8765u16;
     let mut print = false;
     let mut theme = None;
@@ -77,24 +82,25 @@ fn parse_args() -> Result<Option<Options>> {
             }
             "--print" => print = true,
             "--bind" => {
-                bind = args.next().context("--bind butuh alamat, contoh 127.0.0.1")?;
+                bind = args
+                    .next()
+                    .context("--bind needs an address, for example 127.0.0.1")?;
             }
             "--port" => {
-                let value = args.next().context("--port butuh angka")?;
+                let value = args.next().context("--port needs a number")?;
                 port = value
                     .parse::<u16>()
-                    .with_context(|| format!("port tidak valid: {value}"))?;
+                    .with_context(|| format!("invalid port: {value}"))?;
             }
             "--theme" => {
-                let value = args.next().context("--theme butuh nama atau nomor 1-5")?;
+                let value = args
+                    .next()
+                    .context("--theme needs a name or a number between 1 and 5")?;
                 theme = Some(theme::by_name(&value).with_context(|| {
-                    format!(
-                        "tema tidak dikenal: {value}. Pilihan: {}",
-                        theme::names()
-                    )
+                    format!("unknown theme: {value}. Available: {}", theme::names())
                 })?);
             }
-            other => anyhow::bail!("argumen tidak dikenal: {other} (lihat --help)"),
+            other => anyhow::bail!("unknown argument: {other} (see --help)"),
         }
     }
 
@@ -108,15 +114,15 @@ fn parse_args() -> Result<Option<Options>> {
 
 fn print_help() {
     println!(
-        "ytlrc {} — lirik YouTube di terminal\n\n\
-         Penggunaan:\n  ytlrc [opsi]\n\n\
-         Opsi:\n  --print        tanpa TUI, cetak baris lirik aktif (debug/script)\n  --bind <addr>  alamat bind (default 0.0.0.0, supaya bisa diakses dari Windows)\n  --port <port>  port daemon (default 8765)\n  --theme <t>    tema awal: {} — atau nomor 1-5\n  -h, --help     bantuan\n  -V, --version  versi\n\n\
-         Theme (bisa diganti saat berjalan):\n  t              tema berikutnya\n  1-5            pilih tema langsung\n  Pilihan: {}\n\n\
-         Keybinding TUI:\n  q / Esc        keluar\n  + / -          geser offset lirik 0.25 detik\n  0              reset offset\n  p              toggle synced / plain\n  r              ambil ulang lirik sekarang (abaikan cache)\n  m              cari manual \"Artis - Judul\"\n  ↑ / ↓ / PgUp / PgDn  scroll mode plain\n\n\
-         Pencarian lirik otomatis: saat lagu berganti, ytlrc mencari sendiri.\n\
-         Kalau gagal, ia mencoba lagi otomatis (8s, 25s, 90s, 240s, lalu tiap 5 menit)\n\
-         dengan strategi query berbeda — tanpa perlu menekan tombol.\n\n\
-         Lirik berasal dari LRCLIB (https://lrclib.net), butuh `curl` di PATH.",
+        "ytlrc {} — YouTube lyrics in your terminal\n\n\
+         Usage:\n  ytlrc [options]\n\n\
+         Options:\n  --print        no TUI, print the active lyric line (debug/scripts)\n  --bind <addr>  listen address (default 127.0.0.1; use 0.0.0.0 from WSL)\n  --port <port>  daemon port (default 8765)\n  --theme <t>    initial theme: {} — or a number from 1 to 5\n  -h, --help     show this help\n  -V, --version  show the version\n\n\
+         Themes (switch while running):\n  t              next theme\n  1-5            pick a theme directly\n  Available: {}\n\n\
+         TUI keybindings:\n  q / Esc        quit\n  + / -          shift lyrics by 0.25 seconds\n  0              reset offset\n  p              toggle synced / plain\n  r              refetch lyrics now (bypass cache)\n  m              search manually \"Artist - Title\"\n  ↑ / ↓ / PgUp / PgDn  scroll in plain mode\n\n\
+         Automatic lookups: ytlrc searches for lyrics whenever the song changes.\n\
+         If a lookup fails it keeps retrying on its own (8s, 25s, 90s, 240s, then\n\
+         every 5 minutes) with different query strategies — no key press needed.\n\n\
+         Lyrics come from LRCLIB (https://lrclib.net) and require `curl` on PATH.",
         env!("CARGO_PKG_VERSION"),
         theme::names(),
         theme::names()

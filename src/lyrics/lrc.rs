@@ -1,5 +1,5 @@
-//! Parser LRC: `[mm:ss.xx] teks`, dukung beberapa timestamp per baris,
-//! format `hh:mm:ss.xx`, tag `[offset:±ms]`, dan metadata lain.
+//! LRC parser: `[mm:ss.xx] text`, multiple timestamps per line, `hh:mm:ss.xx`
+//! timestamps, `[offset:±ms]` tags, and other metadata.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LyricLine {
@@ -45,7 +45,9 @@ fn split_tags(line: &str) -> (Vec<i64>, String, Option<i64>) {
     let mut rest = line.trim_start();
 
     while let Some(after_open) = rest.strip_prefix('[') {
-        let Some(close) = after_open.find(']') else { break };
+        let Some(close) = after_open.find(']') else {
+            break;
+        };
         let tag = &after_open[..close];
 
         if let Some(ms) = parse_stamp(tag) {
@@ -56,7 +58,10 @@ fn split_tags(line: &str) -> (Vec<i64>, String, Option<i64>) {
 
         if let Some((key, value)) = tag.split_once(':') {
             let key = key.trim().to_ascii_lowercase();
-            if matches!(key.as_str(), "offset" | "ar" | "ti" | "al" | "by" | "re" | "ve" | "length") {
+            if matches!(
+                key.as_str(),
+                "offset" | "ar" | "ti" | "al" | "by" | "re" | "ve" | "length"
+            ) {
                 if key == "offset" {
                     offset = value.trim().parse::<i64>().ok();
                 }
@@ -65,7 +70,7 @@ fn split_tags(line: &str) -> (Vec<i64>, String, Option<i64>) {
             }
         }
 
-        // Bukan tag yang dikenal (mis. `[Chorus]`): anggap bagian dari lirik.
+        // Not a known tag (for example `[Chorus]`): keep it as lyric text.
         break;
     }
 
@@ -73,9 +78,9 @@ fn split_tags(line: &str) -> (Vec<i64>, String, Option<i64>) {
 }
 
 fn strip_word_tags(text: &str) -> String {
-    // Sebagian record LRCLIB memakai enhanced LRC dengan tag per kata:
-    // `<00:18.89>We're <00:19.25>no ...`. Untuk tampilan per baris,
-    // tag kata dibuang dan spasinya dirapikan.
+    // Some LRCLIB records use enhanced LRC with per-word tags:
+    // `<00:18.89>We're <00:19.25>no ...`. For a per-line display the word
+    // tags are stripped and the spacing is tidied up.
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     let mut removed = false;
@@ -167,7 +172,7 @@ fn parse_stamp(tag: &str) -> Option<i64> {
     Some(hours * 3_600_000 + minutes * 60_000 + seconds * 1000 + millis)
 }
 
-/// Index baris terakhir dengan waktu <= posisi.
+/// Index of the last line whose timestamp is <= the given position.
 pub fn active_index(lines: &[LyricLine], pos_ms: i64) -> Option<usize> {
     if lines.is_empty() {
         return None;
@@ -220,9 +225,18 @@ mod tests {
     #[test]
     fn finds_active_line() {
         let lines = vec![
-            LyricLine { time_ms: 1_000, text: "a".into() },
-            LyricLine { time_ms: 2_000, text: "b".into() },
-            LyricLine { time_ms: 3_000, text: "c".into() },
+            LyricLine {
+                time_ms: 1_000,
+                text: "a".into(),
+            },
+            LyricLine {
+                time_ms: 2_000,
+                text: "b".into(),
+            },
+            LyricLine {
+                time_ms: 3_000,
+                text: "c".into(),
+            },
         ];
         assert_eq!(active_index(&lines, 0), None);
         assert_eq!(active_index(&lines, 1_500), Some(0));
