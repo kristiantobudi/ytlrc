@@ -77,6 +77,9 @@ Regenerate or tweak it with PIL/any image editor and keep the 1280×640 size.
   pins).
 - Use a concise, descriptive release title, e.g. `v0.2.0 — reliable song switching
   + cross-platform builds`.
+- Enable **GitHub Pages** (Settings → Pages → Source: Deploy from a branch,
+  Branch: `main`, folder: `/docs`) to publish `docs/index.html` as a short demo
+  page at `https://kristiantobudi.github.io/ytlrc/`.
 
 ## 5. Releases
 

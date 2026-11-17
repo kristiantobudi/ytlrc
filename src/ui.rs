@@ -81,6 +81,9 @@ struct App {
     /// Track key the current lyrics (or in-flight lookup) belong to.
     view_key: Option<String>,
     keys: config::Keybindings,
+    /// When the current track started, used for the active-line pulse and
+    /// the brief "new track" flash in the header.
+    track_started: Instant,
 }
 
 impl App {
@@ -120,6 +123,7 @@ impl App {
             manual_lookup: false,
             view_key: None,
             keys: stored.keybindings,
+            track_started: Instant::now(),
         }
     }
 
@@ -190,6 +194,7 @@ impl App {
         self.manual_lookup = false;
         self.raw_title = state.title.clone();
         self.channel = state.channel.clone();
+        self.track_started = Instant::now();
 
         let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
         // YouTube Music exposes a clean artist name through mediaSession.
@@ -627,8 +632,14 @@ impl App {
 
         let status = self.status_text();
         let status_color = self.status_color();
+        let is_new_track = !self.lyrics.track.is_empty()
+            && self.track_started.elapsed() < Duration::from_millis(1500);
 
-        let left = format!("{icon} {title}");
+        let left = if is_new_track {
+            format!("{icon} {title}  ✦ NEW")
+        } else {
+            format!("{icon} {title}")
+        };
         let pad = area
             .width
             .saturating_sub(left.chars().count() as u16 + status.chars().count() as u16 + 2)
@@ -648,18 +659,38 @@ impl App {
         }
         subtitle.push_str(&format!("  •  theme {}", theme.name));
 
-        let header = Paragraph::new(vec![
-            Line::from(vec![
+        let title_text = format!("{icon} {title}");
+        let left_spans = if is_new_track {
+            vec![
                 Span::styled(
-                    left,
+                    title_text,
                     Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" ".repeat(pad)),
                 Span::styled(
-                    status,
-                    Style::new().fg(status_color).add_modifier(Modifier::BOLD),
+                    "  ✦ NEW",
+                    Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
                 ),
-            ]),
+            ]
+        } else {
+            vec![Span::styled(
+                title_text,
+                Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
+            )]
+        };
+
+        let header = Paragraph::new(vec![
+            Line::from(
+                left_spans
+                    .into_iter()
+                    .chain([
+                        Span::raw(" ".repeat(pad)),
+                        Span::styled(
+                            status,
+                            Style::new().fg(status_color).add_modifier(Modifier::BOLD),
+                        ),
+                    ])
+                    .collect::<Vec<_>>(),
+            ),
             Line::from(Span::styled(subtitle, Style::new().fg(theme.hint))),
         ])
         .block(
@@ -847,7 +878,9 @@ impl App {
                     line.text.clone()
                 };
                 let style = if is_active {
-                    Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
+                    Style::new()
+                        .fg(self.pulse_color(theme))
+                        .add_modifier(Modifier::BOLD)
                 } else if is_past {
                     Style::new().fg(theme.past)
                 } else {
@@ -858,6 +891,19 @@ impl App {
             .collect();
 
         frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
+    /// A gentle brightness pulse for the active line's color, standing in
+    /// for a real beat sync since ytlrc has no audio access to detect tempo.
+    ///
+    /// ponytail: fixed ~2 Hz pulse, not the song's actual BPM — add real
+    /// tempo detection (e.g. from an audio-analysis API) if that's ever
+    /// worth the complexity.
+    fn pulse_color(&self, theme: Theme) -> Color {
+        if theme::reduce_motion() {
+            return theme.accent;
+        }
+        pulse_brightness(theme.accent, self.track_started.elapsed().as_secs_f64())
     }
 
     /// Renders the active line word by word: words already sung are in the
@@ -1213,6 +1259,20 @@ fn print_retry(next_retry: Option<Instant>) {
     }
 }
 
+/// Blends `color` toward black on a ~2 Hz sine wave, between 65% and 100%
+/// brightness. `Color::Reset` / non-RGB colors pass through unchanged since
+/// there's nothing sane to blend (keeps `NO_COLOR` fully colorless).
+fn pulse_brightness(color: Color, elapsed_secs: f64) -> Color {
+    let Color::Rgb(r, g, b) = color else {
+        return color;
+    };
+    const PULSE_HZ: f64 = 2.0;
+    let phase = elapsed_secs * PULSE_HZ * std::f64::consts::TAU;
+    let brightness = 0.65 + 0.35 * (phase.sin() * 0.5 + 0.5);
+    let scale = |channel: u8| -> u8 { (channel as f64 * brightness).round() as u8 };
+    Color::Rgb(scale(r), scale(g), scale(b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1225,5 +1285,26 @@ mod tests {
         assert_eq!(retry_delay(3), 240);
         assert_eq!(retry_delay(4), 300);
         assert_eq!(retry_delay(99), 300);
+    }
+
+    #[test]
+    fn pulse_brightness_stays_within_the_dimmed_to_full_range() {
+        let base = Color::Rgb(100, 200, 50);
+        for step in 0..20 {
+            let elapsed = step as f64 * 0.05;
+            let Color::Rgb(r, g, b) = pulse_brightness(base, elapsed) else {
+                panic!("expected an Rgb color back out");
+            };
+            // 65% of 100/200/50, rounded, is the floor; the channel can
+            // never exceed its original value (100% brightness ceiling).
+            assert!((65..=100).contains(&r), "r={r} out of range");
+            assert!((130..=200).contains(&g), "g={g} out of range");
+            assert!((32..=50).contains(&b), "b={b} out of range");
+        }
+    }
+
+    #[test]
+    fn pulse_brightness_passes_through_non_rgb_colors_unchanged() {
+        assert_eq!(pulse_brightness(Color::Reset, 1.0), Color::Reset);
     }
 }

@@ -8,6 +8,12 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- Active-line pulse: the synced lyric highlight gently breathes (~2 Hz
+  brightness blend) instead of staying static, and a brief "✦ NEW"
+  flash appears in the header for 1.5s when a track starts. Both
+  respect `REDUCE_MOTION`.
+- `docs/index.html`: a static GitHub Pages demo page (mock-up of the
+  TUI, feature grid, install snippet).
 - `NO_COLOR` (<https://no-color.org>) disables themed ANSI colors;
   `REDUCE_MOTION` disables the per-word karaoke highlight animation.
 - Remappable single-key shortcuts (offset up/down/reset, theme next,
