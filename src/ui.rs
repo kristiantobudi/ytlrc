@@ -135,6 +135,14 @@ impl App {
         ));
     }
 
+    /// Remember the current offset for the active track so it is restored
+    /// the next time the same song plays.
+    fn persist_offset(&self) {
+        if let Some(key) = &self.last_key {
+            config::save_offset(key, self.offset);
+        }
+    }
+
     fn poll_playback(&mut self) {
         let snapshot = self.playback.lock().unwrap().clone();
         let Some(state) = snapshot else {
@@ -166,7 +174,7 @@ impl App {
 
     fn begin_track(&mut self, state: &PlaybackState, key: String) {
         self.last_key = Some(key.clone());
-        self.offset = 0.0;
+        self.offset = config::load_offset(&key).unwrap_or(0.0);
         self.plain_scroll = 0;
         self.mode = Mode::Synced;
         self.failures = 0;
@@ -486,11 +494,18 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Char('+') | KeyCode::Char('=') => self.offset += 0.25,
-            KeyCode::Char('-') | KeyCode::Char('_') => {
-                self.offset = (self.offset - 0.25).max(-30.0)
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                self.offset += 0.25;
+                self.persist_offset();
             }
-            KeyCode::Char('0') => self.offset = 0.0,
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                self.offset = (self.offset - 0.25).max(-30.0);
+                self.persist_offset();
+            }
+            KeyCode::Char('0') => {
+                self.offset = 0.0;
+                self.persist_offset();
+            }
             KeyCode::Char('t') => self.set_theme(self.theme_index + 1),
             KeyCode::Char(ch @ '1'..='5') => {
                 if let Some(index) = ch.to_digit(10) {
@@ -812,6 +827,12 @@ impl App {
             .map(|(index, line)| {
                 let is_active = Some(index) == active;
                 let is_past = active.map(|active| index < active).unwrap_or(false);
+                let prefix = if is_active { "▶ " } else { "  " };
+
+                if is_active && !line.words.is_empty() {
+                    return self.render_karaoke_line(line, pos_ms, prefix, theme);
+                }
+
                 let text = if line.text.trim().is_empty() {
                     "♪".to_string()
                 } else {
@@ -824,12 +845,46 @@ impl App {
                 } else {
                     Style::new().fg(theme.text)
                 };
-                let prefix = if is_active { "▶ " } else { "  " };
                 Line::from(Span::styled(format!("{prefix}{text}"), style))
             })
             .collect();
 
         frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
+    /// Renders the active line word by word: words already sung are in the
+    /// accent color, the word currently being sung is bold + underlined, and
+    /// words not yet reached fall back to the normal text color. Falls back
+    /// to whole-line highlighting when the line carries no word timing.
+    fn render_karaoke_line<'a>(
+        &self,
+        line: &'a LyricLine,
+        pos_ms: i64,
+        prefix: &'static str,
+        theme: Theme,
+    ) -> Line<'a> {
+        let mut spans = vec![Span::styled(prefix, Style::new().fg(theme.accent))];
+        for (index, word) in line.words.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::raw(" "));
+            }
+            let next_time = line
+                .words
+                .get(index + 1)
+                .map(|next| next.time_ms)
+                .unwrap_or(i64::MAX);
+            let style = if pos_ms >= word.time_ms && pos_ms < next_time {
+                Style::new()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else if pos_ms >= next_time {
+                Style::new().fg(theme.accent)
+            } else {
+                Style::new().fg(theme.text)
+            };
+            spans.push(Span::styled(word.text.as_str(), style));
+        }
+        Line::from(spans)
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {

@@ -255,6 +255,14 @@ If you change the daemon port, update `DAEMON_URL` in
 `extension/background.js` and `host_permissions` in `extension/manifest.json`,
 then reload the extension.
 
+### Firefox
+
+The extension manifest targets Manifest V3 for Chromium browsers (Chrome,
+Edge, Brave). Firefox's MV3 support differs enough (background scripts
+instead of a true service worker, `browser_specific_settings`) that the
+current `manifest.json` does not load as-is in `about:debugging`. There is no
+Firefox build yet — track or open an issue if you want to help port it.
+
 ## Files and configuration
 
 The daemon uses the standard per-user directories:

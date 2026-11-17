@@ -255,6 +255,14 @@ cargo build --release
 Jika port daemon diganti, ubah `DAEMON_URL` di `extension/background.js` dan
 `host_permissions` di `extension/manifest.json`, lalu reload extension.
 
+### Firefox
+
+Manifest extension ini menyasar Manifest V3 untuk browser Chromium (Chrome,
+Edge, Brave). Dukungan MV3 Firefox cukup beda (background script, bukan
+service worker sungguhan; butuh `browser_specific_settings`) sehingga
+`manifest.json` saat ini tidak langsung jalan di `about:debugging`. Belum ada
+build Firefox — buka issue kalau mau bantu porting.
+
 ## File dan konfigurasi
 
 Daemon memakai direktori standar per pengguna:
