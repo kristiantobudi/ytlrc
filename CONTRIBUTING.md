@@ -34,6 +34,9 @@ curl -s -X POST http://127.0.0.1:8765/state \
   -d '{"videoId":"dQw4w9WgXcQ","title":"Rick Astley - Never Gonna Give You Up (Official Video)","channel":"Rick Astley","duration":213,"position":83,"paused":false,"isAd":false,"source":"youtube"}'
 ```
 
+Add `-H 'Authorization: Bearer <secret>'` when the daemon was started with
+`--token <secret>`.
+
 ## Checks before opening a pull request
 
 ```bash
@@ -80,7 +83,9 @@ Add a body when the change is not obvious. Reference issues with `Fixes #123`.
 - Additional lyrics providers (with a small, dependency-free HTTP layer).
 - More themes or a configurable theme file.
 - Better title parsing for non-English titles.
-- Packaging: Homebrew formula, Scoop manifest, AUR package, Nix flake.
+- Publishing the `packaging/` manifests (Homebrew tap, Scoop bucket, AUR,
+  winget) once release checksums are filled in — see
+  [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md#7-distribution-optional-but-effective).
 - Accessibility and terminal compatibility improvements.
 
 ## Reporting bugs

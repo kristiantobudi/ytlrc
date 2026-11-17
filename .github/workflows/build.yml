@@ -32,6 +32,37 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-audit
+
+      - name: cargo audit
+        run: cargo audit
+
+  msrv:
+    name: MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build on the declared MSRV
+        run: cargo build --locked
+
+      - name: cargo test on the declared MSRV
+        run: cargo test --locked
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -68,8 +99,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools lld
 
       - name: Build static binary
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
       - name: Upload binary

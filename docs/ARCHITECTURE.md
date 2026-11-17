@@ -55,7 +55,10 @@ overwriting the current one.
 
 ## Security boundaries
 
-- The HTTP API has no authentication; it binds loopback by default and is meant
-  for localhost only.
+- The HTTP API binds loopback by default and is meant for localhost only.
+  `--token` adds bearer-token authentication to `/state` ( `/health` stays open)
+  for WSL/LAN bindings, and CORS only allows YouTube and extension origins.
 - Lyrics requests are outbound HTTPS to LRCLIB via the system `curl`.
 - No telemetry; the extension only talks to the local daemon.
+- The cache is pruned at startup (30-day TTL, 500-file cap) and `--print` uses
+  the same retry schedule as the TUI.

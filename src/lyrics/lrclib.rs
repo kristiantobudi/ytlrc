@@ -215,3 +215,109 @@ fn urlencode(text: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(track: &str, artist: &str, synced: bool, duration: f64) -> Record {
+        Record {
+            id: 1,
+            track_name: track.to_string(),
+            artist_name: artist.to_string(),
+            instrumental: false,
+            plain_lyrics: Some("plain".to_string()),
+            synced_lyrics: if synced {
+                Some("[00:01.00] line".to_string())
+            } else {
+                None
+            },
+            duration,
+        }
+    }
+
+    #[test]
+    fn exact_title_and_artist_with_synced_lyrics_wins_over_partial_match() {
+        let exact = record("Never Gonna Give You Up", "Rick Astley", true, 213.0);
+        let partial = record(
+            "Never Gonna Give You Up (Remix)",
+            "Rick Astley Cover",
+            false,
+            213.0,
+        );
+        let best = best_match(
+            vec![partial.clone(), exact.clone()],
+            "Never Gonna Give You Up",
+            "Rick Astley",
+            213.0,
+        );
+        assert_eq!(best.unwrap().track_name, exact.track_name);
+    }
+
+    #[test]
+    fn duration_mismatch_beyond_30s_scores_lower_than_a_close_match() {
+        let wanted_duration = 60.0;
+        let close = score(
+            &record("Hello", "Adele", true, 61.0),
+            &normalize("Hello"),
+            &normalize("Adele"),
+            wanted_duration,
+        );
+        let far_off = score(
+            &record("Hello", "Adele", true, 300.0),
+            &normalize("Hello"),
+            &normalize("Adele"),
+            wanted_duration,
+        );
+        assert!(
+            far_off < close,
+            "expected a large duration gap ({far_off}) to score lower than a close one ({close})"
+        );
+    }
+
+    #[test]
+    fn a_wrong_track_with_a_wrong_duration_scores_non_positive() {
+        let score = score(
+            &record("Completely Different", "Nobody", false, 9999.0),
+            &normalize("Hello"),
+            &normalize("Adele"),
+            60.0,
+        );
+        assert!(
+            score <= 0.0,
+            "expected no partial match to win, got {score}"
+        );
+    }
+
+    #[test]
+    fn best_match_returns_none_when_every_candidate_scores_non_positive() {
+        let wrong = record("Completely Different Song", "Nobody", false, 9999.0);
+        let best = best_match(vec![wrong], "Hello", "Adele", 60.0);
+        assert!(best.is_none());
+    }
+
+    #[test]
+    fn best_match_returns_none_for_an_empty_candidate_list() {
+        assert!(best_match(Vec::new(), "Hello", "Adele", 200.0).is_none());
+    }
+
+    #[test]
+    fn synced_lyrics_are_scored_above_plain_only_otherwise_identical_records() {
+        let synced = record("Song", "Artist", true, 0.0);
+        let plain_only = record("Song", "Artist", false, 0.0);
+        let synced_score = score(&synced, &normalize("Song"), &normalize("Artist"), 0.0);
+        let plain_score = score(&plain_only, &normalize("Song"), &normalize("Artist"), 0.0);
+        assert!(synced_score > plain_score);
+    }
+
+    #[test]
+    fn normalize_ignores_case_and_punctuation() {
+        assert_eq!(normalize("Hello, World!"), normalize("hello world"));
+    }
+
+    #[test]
+    fn urlencode_escapes_spaces_and_reserved_characters() {
+        assert_eq!(urlencode("a b&c"), "a+b%26c");
+        assert_eq!(urlencode("safe-_.~chars"), "safe-_.~chars");
+    }
+}

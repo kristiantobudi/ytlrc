@@ -8,7 +8,6 @@ authors = ["ytlrc contributors"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kristiantobudi/ytlrc"
-homepage = "https://github.com/kristiantobudi/ytlrc"
 keywords = ["youtube", "lyrics", "lrc", "tui", "music"]
 categories = ["command-line-utilities", "multimedia::audio"]
 
@@ -21,6 +20,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "sync", "time"] }
 tower-http = { version = "0.7", features = ["cors"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [profile.release]
 opt-level = "z"

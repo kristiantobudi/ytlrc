@@ -126,7 +126,12 @@ macOS.
 - Multi-tab safe: only the tab you are actually watching is forwarded.
 - Manual offset (`+` / `-`), synced/plain toggle, cache-bypassing refetch, and
   manual search.
-- `--print` mode for scripts/stream overlays.
+- `--print` mode for scripts/stream overlays, with the same automatic retries as
+  the TUI.
+- Optional API token (`--token` / `YTLRC_TOKEN`) for WSL/LAN setups; CORS is
+  limited to YouTube and browser-extension origins.
+- Startup cache maintenance: expired entries, crashed temp files, and the oldest
+  records above 500 files are removed automatically.
 - One static binary, no runtime. Typical RAM usage ~10–15 MB.
 
 ## Platform support
@@ -152,6 +157,30 @@ static Linux binary on every push.
 - Chrome, Edge, Brave or another Chromium browser with Manifest V3 support.
 
 ## Build and run
+
+### Package managers (early, SHA256s not yet published)
+
+The `packaging/` folder has ready-to-use manifests once a tagged release's
+checksums are filled in:
+
+```bash
+# Nix
+nix build .                       # or: nix run .
+
+# Homebrew (local formula file)
+brew install --formula ./packaging/homebrew/ytlrc.rb
+
+# Scoop (local manifest file)
+scoop install ./packaging/scoop/ytlrc.json
+
+# Arch Linux (builds from source)
+cd packaging/aur && makepkg -si
+```
+
+winget submission uses `packaging/winget/*.yaml` as a starting point for a PR
+against [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
+None of these are published to an official tap/bucket/repo yet — see
+[docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) for the publishing checklist.
 
 ### Windows (native, recommended)
 
@@ -229,10 +258,11 @@ cargo build --release
   (`Load unpacked` → the `extension/` folder).
 - The daemon only accepts connections from the same machine by default
   (`127.0.0.1`). To control a daemon that runs on another computer, start it
-  with `--bind 0.0.0.0`, point `DAEMON_URL` in `extension/background.js` to
-  `http://<that-ip>:8765/state`, add it to `host_permissions`, and reload the
-  extension. Only do this on a trusted network: the endpoint has no
-  authentication.
+  with `--bind 0.0.0.0 --token <secret>`, point `DAEMON_URL` and `TOKEN` in
+  `extension/background.js` to `http://<that-ip>:8765/state` and the same
+  secret, add the address to `host_permissions`, and reload the extension.
+  Without `--token` the endpoint is unauthenticated, so only use that on a
+  trusted network.
 - Binaries downloaded from CI/releases: on macOS run
   `chmod +x ./ytlrc && xattr -d com.apple.quarantine ./ytlrc`; on Windows,
   SmartScreen may ask for confirmation the first time.
@@ -248,6 +278,14 @@ cargo build --release
 If you change the daemon port, update `DAEMON_URL` in
 `extension/background.js` and `host_permissions` in `extension/manifest.json`,
 then reload the extension.
+
+### Firefox
+
+The extension manifest targets Manifest V3 for Chromium browsers (Chrome,
+Edge, Brave). Firefox's MV3 support differs enough (background scripts
+instead of a true service worker, `browser_specific_settings`) that the
+current `manifest.json` does not load as-is in `about:debugging`. There is no
+Firefox build yet — track or open an issue if you want to help port it.
 
 ## Files and configuration
 
@@ -267,6 +305,7 @@ Delete those folders to reset the selected theme or force fresh lookups.
 --print        no TUI; print the active lyric line to stdout (debug/scripts)
 --bind <addr>  listen address (default 127.0.0.1; use 0.0.0.0 from WSL)
 --port <port>  daemon port (default 8765)
+--token <s>    require this token on /state (or set YTLRC_TOKEN)
 --theme <t>    initial theme: Neon, Dracula, Nord, Gruvbox, Mono (or 1-5)
 -h, --help
 -V, --version
@@ -309,10 +348,13 @@ Delete those folders to reset the selected theme or force fresh lookups.
 2. The first query uses the parsed artist/title; a miss falls back to six
    different query shapes, including title-only searches.
 3. If nothing is found, ytlrc retries with the backoff shown above and keeps the
-   countdown visible (`RETRY 8s`) until the track changes.
+   countdown visible (`RETRY 8s`) until the track changes. `--print` mode follows
+   the same schedule and logs each retry.
 4. Lyrics are cached per track for 30 days; misses for 10 minutes.
 5. Live streams and DJ sets that reuse one video id are handled because the cache
    key includes the track title, not just the video id.
+6. At startup the cache is pruned: entries older than 30 days and files above
+   500 are removed, oldest first.
 
 Press `r` to retry immediately, or `m` to search manually (this disables
 automatic retries for that track).
@@ -326,6 +368,10 @@ curl -s -X POST http://127.0.0.1:8765/state \
   -d '{"videoId":"dQw4w9WgXcQ","title":"Rick Astley - Never Gonna Give You Up (Official Video)","channel":"Rick Astley","duration":213,"position":83,"paused":false,"isAd":false,"source":"youtube"}'
 curl -s http://127.0.0.1:8765/state
 ```
+
+If the daemon runs with `--token secret`, add
+`-H 'Authorization: Bearer secret'` to the `/state` requests (`/health` stays
+public).
 
 Headless mode:
 
@@ -355,6 +401,14 @@ still supported but no longer required.
 
 No. LRCLIB is public and requires no key. Nothing is uploaded; playback metadata
 only travels from the extension to `127.0.0.1` on your own machine.
+
+### Is the local API secure?
+
+By default it listens on loopback only, so other machines cannot reach it. When
+you bind a LAN address (`--bind 0.0.0.0`, as the WSL launcher does), start the
+daemon with `--token <secret>` and put the same value in `TOKEN` inside
+`extension/background.js`. CORS is restricted to YouTube and browser-extension
+origins. See [SECURITY.md](SECURITY.md) for the full model.
 
 ### Why do some songs show no lyrics?
 
@@ -406,6 +460,11 @@ of RAM, and has no runtime dependencies other than `curl`.
   own; `m` lets you correct the artist/title.
 - Check the parsed title in the header.
 
+**`401 Unauthorized` or the extension stopped working after `--token`**
+- Put the same secret in `TOKEN` in `extension/background.js`, reload the
+  extension, and reload the YouTube tab.
+- Command-line clients need `-H 'Authorization: Bearer <secret>'`.
+
 **Lyrics drift out of sync**
 - Use `+` / `-`; the offset is shown in the footer.
 
@@ -427,7 +486,7 @@ of RAM, and has no runtime dependencies other than `curl`.
 ```
 ytlrc/
 ├─ .github/
-│  ├─ workflows/build.yml       # CI: test + build on Linux, macOS, Windows
+│  ├─ workflows/build.yml       # CI: fmt/clippy/audit/MSRV, test + build on Linux, macOS, Windows
 │  ├─ workflows/release.yml     # tagged releases with prebuilt binaries
 │  ├─ ISSUE_TEMPLATE/           # bug report / feature request forms
 │  └─ PULL_REQUEST_TEMPLATE.md
@@ -435,6 +494,12 @@ ytlrc/
 ├─ build.sh                     # Linux static / macOS native build
 ├─ build.ps1                    # Windows native build
 ├─ ytlrc.cmd                    # CMD launcher (native .exe or WSL)
+├─ flake.nix                    # Nix flake (`nix build` / `nix run`)
+├─ packaging/
+│  ├─ homebrew/ytlrc.rb         # Homebrew formula (tap or `brew install --formula`)
+│  ├─ scoop/ytlrc.json          # Scoop manifest
+│  ├─ aur/PKGBUILD              # Arch Linux AUR package
+│  └─ winget/                   # winget manifest (version/installer/locale)
 ├─ CHANGELOG.md
 ├─ CONTRIBUTING.md
 ├─ SECURITY.md

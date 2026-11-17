@@ -125,7 +125,12 @@ Berjalan di Windows, Linux, dan macOS.
 - Aman multi-tab: hanya tab yang benar-benar ditonton yang dikirim.
 - Offset manual (`+` / `-`), toggle synced/plain, refetch tanpa cache, dan
   pencarian manual.
-- Mode `--print` untuk script / overlay streaming.
+- Mode `--print` untuk script / overlay streaming, dengan auto-retry yang sama
+  seperti TUI.
+- Token API opsional (`--token` / `YTLRC_TOKEN`) untuk WSL/LAN; CORS dibatasi ke
+  origin YouTube dan extension browser.
+- Perawatan cache saat startup: entri kedaluwarsa, file temp sisa crash, dan
+  record tertua di atas 500 file dihapus otomatis.
 - Satu binary statis, tanpa runtime. RAM tipikal ~10–15 MB.
 
 ## Dukungan platform
@@ -151,6 +156,29 @@ binary Linux statis pada setiap push.
 - Chrome, Edge, Brave, atau browser Chromium lain yang mendukung Manifest V3.
 
 ## Build dan jalankan
+
+### Package manager (awal, SHA256 belum dipublikasikan)
+
+Folder `packaging/` berisi manifest siap pakai setelah checksum rilis diisi:
+
+```bash
+# Nix
+nix build .                       # atau: nix run .
+
+# Homebrew (file formula lokal)
+brew install --formula ./packaging/homebrew/ytlrc.rb
+
+# Scoop (file manifest lokal)
+scoop install ./packaging/scoop/ytlrc.json
+
+# Arch Linux (build dari source)
+cd packaging/aur && makepkg -si
+```
+
+Submission winget memakai `packaging/winget/*.yaml` sebagai titik awal PR ke
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). Belum ada
+yang dipublikasikan ke tap/bucket/repo resmi — lihat
+[docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) untuk checklist publikasinya.
 
 ### Windows (native, disarankan)
 
@@ -230,9 +258,11 @@ cargo build --release
   (`Load unpacked` → folder `extension/`).
 - Secara default daemon hanya menerima koneksi dari mesin yang sama
   (`127.0.0.1`). Untuk mengendalikan daemon di komputer lain, jalankan dengan
-  `--bind 0.0.0.0`, ubah `DAEMON_URL` di `extension/background.js` menjadi
-  `http://<ip-tujuan>:8765/state`, tambahkan ke `host_permissions`, lalu reload
-  extension. Lakukan hanya di jaringan tepercaya: endpoint ini tanpa autentikasi.
+  `--bind 0.0.0.0 --token <rahasia>`, ubah `DAEMON_URL` dan `TOKEN` di
+  `extension/background.js` menjadi `http://<ip-tujuan>:8765/state` dan rahasia
+  yang sama, tambahkan alamatnya ke `host_permissions`, lalu reload extension.
+  Tanpa `--token` endpoint tidak terautentikasi, jadi hanya pakai di jaringan
+  tepercaya.
 - Binary hasil unduhan CI/release: di macOS jalankan
   `chmod +x ./ytlrc && xattr -d com.apple.quarantine ./ytlrc`; di Windows,
   SmartScreen mungkin meminta konfirmasi saat pertama dijalankan.
@@ -247,6 +277,14 @@ cargo build --release
 
 Jika port daemon diganti, ubah `DAEMON_URL` di `extension/background.js` dan
 `host_permissions` di `extension/manifest.json`, lalu reload extension.
+
+### Firefox
+
+Manifest extension ini menyasar Manifest V3 untuk browser Chromium (Chrome,
+Edge, Brave). Dukungan MV3 Firefox cukup beda (background script, bukan
+service worker sungguhan; butuh `browser_specific_settings`) sehingga
+`manifest.json` saat ini tidak langsung jalan di `about:debugging`. Belum ada
+build Firefox — buka issue kalau mau bantu porting.
 
 ## File dan konfigurasi
 
@@ -266,6 +304,7 @@ Hapus folder tersebut untuk mereset tema atau memaksa pencarian lirik baru.
 --print        tanpa TUI; cetak baris lirik aktif ke stdout (debug/script)
 --bind <addr>  alamat listen (default 127.0.0.1; pakai 0.0.0.0 dari WSL)
 --port <port>  port daemon (default 8765)
+--token <s>    wajibkan token ini pada /state (atau set YTLRC_TOKEN)
 --theme <t>    tema awal: Neon, Dracula, Nord, Gruvbox, Mono (atau 1-5)
 -h, --help
 -V, --version
@@ -309,10 +348,13 @@ Hapus folder tersebut untuk mereset tema atau memaksa pencarian lirik baru.
 2. Query pertama memakai artis/judul hasil parser; jika gagal, ada enam variasi
    query, termasuk pencarian judul saja.
 3. Jika tetap tidak ketemu, ytlrc mengulang dengan jeda di atas dan menampilkan
-   hitungan mundur (`RETRY 8s`) sampai lagu berganti.
+   hitungan mundur (`RETRY 8s`) sampai lagu berganti. Mode `--print` memakai
+   jadwal yang sama dan mencatat setiap percobaan.
 4. Lirik di-cache per track selama 30 hari; hasil "tidak ditemukan" 10 menit.
 5. Live stream / DJ set yang memakai satu video id tetap ditangani karena key
    cache menyertakan judul track, bukan hanya video id.
+6. Saat startup cache dibersihkan: entri lebih dari 30 hari dan file di atas 500
+   dihapus, mulai dari yang paling lama.
 
 Tekan `r` untuk mencoba lagi sekarang, atau `m` untuk pencarian manual (ini
 mematikan retry otomatis untuk track tersebut).
@@ -326,6 +368,10 @@ curl -s -X POST http://127.0.0.1:8765/state \
   -d '{"videoId":"dQw4w9WgXcQ","title":"Rick Astley - Never Gonna Give You Up (Official Video)","channel":"Rick Astley","duration":213,"position":83,"paused":false,"isAd":false,"source":"youtube"}'
 curl -s http://127.0.0.1:8765/state
 ```
+
+Jika daemon dijalankan dengan `--token rahasia`, tambahkan
+`-H 'Authorization: Bearer rahasia'` pada request `/state` (`/health` tetap
+publik).
 
 Mode headless:
 
@@ -355,6 +401,14 @@ didukung tetapi tidak lagi wajib.
 
 Tidak. LRCLIB publik dan tanpa key. Tidak ada data yang diunggah; metadata
 playback hanya dikirim dari extension ke `127.0.0.1` di mesin sendiri.
+
+### Apakah API lokal aman?
+
+Secara default hanya listen di loopback, jadi mesin lain tidak bisa mengaksesnya.
+Kalau di-bind ke alamat LAN (`--bind 0.0.0.0`, seperti launcher WSL), jalankan
+daemon dengan `--token <rahasia>` dan isi `TOKEN` yang sama di
+`extension/background.js`. CORS dibatasi ke origin YouTube dan extension browser.
+Lihat [SECURITY.md](SECURITY.md) untuk model lengkapnya.
 
 ### Kenapa sebagian lagu tidak punya lirik?
 
@@ -405,6 +459,11 @@ tanpa dependensi runtime selain `curl`.
 - Banyak video live/remix/cover tidak ada di LRCLIB. ytlrc terus mencoba sendiri;
   `m` untuk mengoreksi artis/judul.
 - Cek judul hasil parser di header.
+
+**`401 Unauthorized` atau extension berhenti setelah `--token`**
+- Isi rahasia yang sama di `TOKEN` pada `extension/background.js`, reload
+  extension, lalu reload tab YouTube.
+- Client command-line perlu `-H 'Authorization: Bearer <rahasia>'`.
 
 **Lirik bergeser / telat**
 - Gunakan `+` / `-`; nilai offset tampil di footer.

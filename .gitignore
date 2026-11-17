@@ -1,6 +1,7 @@
 /target
 /ytlrc
 /ytlrc.exe
+/dist
 *.pdb
 *.log
 .DS_Store

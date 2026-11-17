@@ -2,9 +2,18 @@
 //! timestamps, `[offset:±ms]` tags, and other metadata.
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    pub time_ms: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct LyricLine {
     pub time_ms: i64,
     pub text: String,
+    /// Per-word timestamps from enhanced LRC (`<mm:ss.xx>word`), empty when
+    /// the source only has line-level timing.
+    pub words: Vec<Word>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -24,11 +33,12 @@ pub fn parse(raw: &str) -> Lrc {
             lrc.offset_ms = offset;
         }
         let text = text.trim().to_string();
-        let text = strip_word_tags(&text);
+        let (text, words) = parse_word_tags(&text);
         for time_ms in stamps {
             timed.push(LyricLine {
                 time_ms,
                 text: text.clone(),
+                words: words.clone(),
             });
         }
     }
@@ -77,13 +87,31 @@ fn split_tags(line: &str) -> (Vec<i64>, String, Option<i64>) {
     (stamps, rest.trim_start().to_string(), offset)
 }
 
-fn strip_word_tags(text: &str) -> String {
-    // Some LRCLIB records use enhanced LRC with per-word tags:
-    // `<00:18.89>We're <00:19.25>no ...`. For a per-line display the word
-    // tags are stripped and the spacing is tidied up.
+/// Parses enhanced-LRC per-word tags (`<00:18.89>We're <00:19.25>no ...`)
+/// into a clean display string plus the list of `(word, timestamp)` pairs.
+/// Lines without word tags return an empty `words` vec — the caller falls
+/// back to line-level timing in that case.
+fn parse_word_tags(text: &str) -> (String, Vec<Word>) {
     let mut out = String::with_capacity(text.len());
+    let mut words = Vec::new();
     let mut chars = text.chars().peekable();
-    let mut removed = false;
+    let mut pending_time: Option<i64> = None;
+    let mut pending_word = String::new();
+    let mut found_any = false;
+
+    let flush_word =
+        |out: &str, pending_time: Option<i64>, pending_word: &str, words: &mut Vec<Word>| {
+            if let Some(time_ms) = pending_time {
+                let word = pending_word.trim();
+                if !word.is_empty() {
+                    words.push(Word {
+                        time_ms,
+                        text: word.to_string(),
+                    });
+                }
+            }
+            let _ = out;
+        };
 
     while let Some(ch) = chars.next() {
         if ch == '<' {
@@ -97,7 +125,12 @@ fn strip_word_tags(text: &str) -> String {
                 inner.push(next);
             }
             if closed && parse_stamp(inner.trim()).is_some() {
-                removed = true;
+                // A new word tag starts: close out whatever word was pending
+                // under the previous timestamp.
+                flush_word(&out, pending_time, &pending_word, &mut words);
+                pending_word.clear();
+                pending_time = parse_stamp(inner.trim());
+                found_any = true;
                 continue;
             }
             out.push('<');
@@ -105,15 +138,22 @@ fn strip_word_tags(text: &str) -> String {
             if closed {
                 out.push('>');
             }
+            pending_word.push('<');
+            pending_word.push_str(&inner);
+            if closed {
+                pending_word.push('>');
+            }
         } else {
             out.push(ch);
+            pending_word.push(ch);
         }
     }
+    flush_word(&out, pending_time, &pending_word, &mut words);
 
-    if removed {
-        collapse_spaces(&out)
+    if found_any {
+        (collapse_spaces(&out), words)
     } else {
-        out
+        (out, Vec::new())
     }
 }
 
@@ -223,24 +263,103 @@ mod tests {
     }
 
     #[test]
+    fn word_level_tags_are_kept_as_per_word_timestamps() {
+        let lrc = parse("[00:18.89] <00:18.89>We're <00:19.25>no <00:19.53>strangers");
+        let words = &lrc.lines[0].words;
+        assert_eq!(words.len(), 3);
+        assert_eq!(
+            words[0],
+            Word {
+                time_ms: 18_890,
+                text: "We're".to_string()
+            }
+        );
+        assert_eq!(
+            words[1],
+            Word {
+                time_ms: 19_250,
+                text: "no".to_string()
+            }
+        );
+        assert_eq!(
+            words[2],
+            Word {
+                time_ms: 19_530,
+                text: "strangers".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn lines_without_word_tags_have_an_empty_words_list() {
+        let lrc = parse("[00:01.00] Plain line, no word timing");
+        assert!(lrc.lines[0].words.is_empty());
+    }
+
+    #[test]
     fn finds_active_line() {
         let lines = vec![
             LyricLine {
                 time_ms: 1_000,
                 text: "a".into(),
+                words: Vec::new(),
             },
             LyricLine {
                 time_ms: 2_000,
                 text: "b".into(),
+                words: Vec::new(),
             },
             LyricLine {
                 time_ms: 3_000,
                 text: "c".into(),
+                words: Vec::new(),
             },
         ];
         assert_eq!(active_index(&lines, 0), None);
         assert_eq!(active_index(&lines, 1_500), Some(0));
         assert_eq!(active_index(&lines, 3_000), Some(2));
         assert_eq!(active_index(&lines, 99_000), Some(2));
+    }
+
+    #[test]
+    fn negative_offset_is_parsed() {
+        let lrc = parse("[offset:-150]\n[00:01.00] Line");
+        assert_eq!(lrc.offset_ms, -150);
+    }
+
+    #[test]
+    fn blank_and_whitespace_only_lines_are_ignored() {
+        let lrc = parse("[00:01.00] First\n\n   \n[00:02.00] Second");
+        assert_eq!(lrc.lines.len(), 2);
+        assert_eq!(lrc.lines[0].text, "First");
+        assert_eq!(lrc.lines[1].text, "Second");
+    }
+
+    #[test]
+    fn metadata_tags_are_stripped_and_do_not_produce_lines() {
+        let lrc = parse("[ar:Someone][ti:Title][al:Album][by:Author][re:App][ve:1.0][length:03:30]\n[00:01.00] Lyric");
+        assert_eq!(lrc.lines.len(), 1);
+        assert_eq!(lrc.lines[0].text, "Lyric");
+    }
+
+    #[test]
+    fn duplicate_timestamp_and_text_pairs_are_deduplicated() {
+        let lrc = parse("[00:01.00] Same\n[00:01.00] Same");
+        assert_eq!(lrc.lines.len(), 1);
+    }
+
+    #[test]
+    fn lines_are_sorted_by_timestamp_regardless_of_file_order() {
+        let lrc = parse("[00:05.00] Later\n[00:01.00] Earlier");
+        assert_eq!(lrc.lines[0].text, "Earlier");
+        assert_eq!(lrc.lines[1].text, "Later");
+    }
+
+    #[test]
+    fn word_tags_with_trailing_unclosed_tag_are_left_intact() {
+        // A malformed enhanced-LRC line (missing closing `>`) must not corrupt
+        // or silently swallow the rest of the text.
+        let lrc = parse("[00:01.00] <00:01.00>Hello <unterminated");
+        assert_eq!(lrc.lines[0].text, "Hello <unterminated");
     }
 }
