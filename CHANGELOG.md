@@ -8,6 +8,17 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- `NO_COLOR` (<https://no-color.org>) disables themed ANSI colors;
+  `REDUCE_MOTION` disables the per-word karaoke highlight animation.
+- Remappable single-key shortcuts (offset up/down/reset, theme next,
+  synced/plain toggle, refetch, manual search) via `keybindings` in
+  `config.json`.
+- `lyrics::provider::Provider` trait: the LRCLIB client is now the
+  default implementation behind a seam, so a second lyrics source can
+  be added without touching cache/orchestration logic.
+- ARM64 release binaries: `ytlrc-linux-arm64` (static musl) and
+  `ytlrc-windows-arm64.exe`, built on native GitHub-hosted ARM64
+  runners.
 - Package manager manifests: Homebrew formula, Scoop manifest, AUR
   PKGBUILD, winget manifest, and a root `flake.nix` for Nix
   (`packaging/`). Checksums are placeholders until filled in per

@@ -83,9 +83,11 @@ Regenerate or tweak it with PIL/any image editor and keep the 1280×640 size.
 The `release` workflow builds and attaches:
 
 - `ytlrc-linux-x86_64` (static musl)
+- `ytlrc-linux-arm64` (static musl)
 - `ytlrc-macos-arm64`
 - `ytlrc-macos-x86_64`
 - `ytlrc-windows-x86_64.exe`
+- `ytlrc-windows-arm64.exe`
 - `ytlrc-extension.zip`
 
 Cut a release:

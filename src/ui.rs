@@ -80,12 +80,14 @@ struct App {
     manual_lookup: bool,
     /// Track key the current lyrics (or in-flight lookup) belong to.
     view_key: Option<String>,
+    keys: config::Keybindings,
 }
 
 impl App {
     fn new(playback: PlaybackRef, cache: Cache, theme_override: Option<usize>) -> Self {
         let (tx, rx) = unbounded_channel();
-        let stored_theme = config::load().theme.as_deref().and_then(theme::by_name);
+        let stored = config::load();
+        let stored_theme = stored.theme.as_deref().and_then(theme::by_name);
         let theme_index = theme_override
             .or(stored_theme)
             .unwrap_or(0)
@@ -117,11 +119,17 @@ impl App {
             next_retry: None,
             manual_lookup: false,
             view_key: None,
+            keys: stored.keybindings,
         }
     }
 
     fn theme(&self) -> Theme {
-        theme::THEMES[self.theme_index.min(theme::THEMES.len() - 1)]
+        let theme = theme::THEMES[self.theme_index.min(theme::THEMES.len() - 1)];
+        if theme::no_color() {
+            theme.no_color()
+        } else {
+            theme
+        }
     }
 
     fn set_theme(&mut self, index: usize) {
@@ -494,25 +502,25 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Char('+') | KeyCode::Char('=') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_up || ch == '=' => {
                 self.offset += 0.25;
                 self.persist_offset();
             }
-            KeyCode::Char('-') | KeyCode::Char('_') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_down || ch == '_' => {
                 self.offset = (self.offset - 0.25).max(-30.0);
                 self.persist_offset();
             }
-            KeyCode::Char('0') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_reset => {
                 self.offset = 0.0;
                 self.persist_offset();
             }
-            KeyCode::Char('t') => self.set_theme(self.theme_index + 1),
+            KeyCode::Char(ch) if ch == self.keys.theme_next => self.set_theme(self.theme_index + 1),
             KeyCode::Char(ch @ '1'..='5') => {
                 if let Some(index) = ch.to_digit(10) {
                     self.set_theme(index as usize - 1);
                 }
             }
-            KeyCode::Char('p') => {
+            KeyCode::Char(ch) if ch == self.keys.toggle_mode => {
                 if self.lyrics.synced {
                     self.mode = match self.mode {
                         Mode::Synced => Mode::Plain,
@@ -520,8 +528,8 @@ impl App {
                     };
                 }
             }
-            KeyCode::Char('r') => self.refetch(false),
-            KeyCode::Char('m') => {
+            KeyCode::Char(ch) if ch == self.keys.refetch => self.refetch(false),
+            KeyCode::Char(ch) if ch == self.keys.manual_search => {
                 let seed = if self.lyrics.artist.is_empty() {
                     String::new()
                 } else {
@@ -829,7 +837,7 @@ impl App {
                 let is_past = active.map(|active| index < active).unwrap_or(false);
                 let prefix = if is_active { "▶ " } else { "  " };
 
-                if is_active && !line.words.is_empty() {
+                if is_active && !line.words.is_empty() && !theme::reduce_motion() {
                     return self.render_karaoke_line(line, pos_ms, prefix, theme);
                 }
 
@@ -933,8 +941,14 @@ impl App {
 
         let keys = if hint.is_empty() {
             format!(
-                "q quit · +/- offset · p synced/plain · t theme ({}) · r retry · m search · ↑↓ scroll",
-                theme.name
+                "q quit · {}/{} offset · {} synced/plain · {} theme ({}) · {} retry · {} search · ↑↓ scroll",
+                self.keys.offset_up,
+                self.keys.offset_down,
+                self.keys.toggle_mode,
+                self.keys.theme_next,
+                theme.name,
+                self.keys.refetch,
+                self.keys.manual_search,
             )
         } else {
             hint

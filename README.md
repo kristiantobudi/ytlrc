@@ -299,6 +299,35 @@ The daemon uses the standard per-user directories:
 
 Delete those folders to reset the selected theme or force fresh lookups.
 
+`config.json` also stores remembered per-track lyric offsets and an optional
+`keybindings` object to remap the single-key shortcuts:
+
+```json
+{
+  "theme": "dracula",
+  "keybindings": {
+    "offset_up": "+",
+    "offset_down": "-",
+    "offset_reset": "0",
+    "theme_next": "t",
+    "toggle_mode": "p",
+    "refetch": "r",
+    "manual_search": "m"
+  }
+}
+```
+
+Avoid remapping onto `1`–`5` (theme shortcuts) or `q`/`Esc` (quit) — those are
+matched first and would shadow the custom binding.
+
+### Accessibility
+
+- `NO_COLOR=1 ytlrc` — disable all themed ANSI colors
+  ([no-color.org](https://no-color.org)); structure (active vs past line,
+  bold/underline) is still conveyed without color.
+- `REDUCE_MOTION=1 ytlrc` — disable the per-word karaoke highlight animation,
+  falling back to a single flat highlight on the active line.
+
 ## CLI options
 
 ```

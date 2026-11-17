@@ -13,6 +13,40 @@ pub struct Config {
     /// `(track key, offset seconds)`, most recently used last.
     #[serde(default)]
     pub offsets: Vec<(String, f64)>,
+    /// User-remappable single-key shortcuts. Unset keys keep their default.
+    #[serde(default)]
+    pub keybindings: Keybindings,
+}
+
+/// Single-character shortcuts for actions that default to a letter or
+/// symbol. Navigation keys (arrows, Page Up/Down, Home, q/Esc to quit,
+/// Ctrl+C) are intentionally not remappable here — only the ones a user is
+/// likely to want on a different key on their layout. Avoid remapping onto
+/// `1`-`5` (theme shortcuts) or `q`/`Esc`: those are matched first and would
+/// silently shadow the custom binding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Keybindings {
+    pub offset_up: char,
+    pub offset_down: char,
+    pub offset_reset: char,
+    pub theme_next: char,
+    pub toggle_mode: char,
+    pub refetch: char,
+    pub manual_search: char,
+}
+
+impl Default for Keybindings {
+    fn default() -> Self {
+        Self {
+            offset_up: '+',
+            offset_down: '-',
+            offset_reset: '0',
+            theme_next: 't',
+            toggle_mode: 'p',
+            refetch: 'r',
+            manual_search: 'm',
+        }
+    }
 }
 
 pub fn load() -> Config {

@@ -80,13 +80,14 @@ Add a body when the change is not obvious. Reference issues with `Fixes #123`.
 
 ## Ideas that fit the project
 
-- Additional lyrics providers (with a small, dependency-free HTTP layer).
+- A second lyrics provider implementing `lyrics::provider::Provider`
+  (LRCLIB is the only one today).
 - More themes or a configurable theme file.
 - Better title parsing for non-English titles.
 - Publishing the `packaging/` manifests (Homebrew tap, Scoop bucket, AUR,
   winget) once release checksums are filled in — see
   [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md#7-distribution-optional-but-effective).
-- Accessibility and terminal compatibility improvements.
+- Terminal compatibility improvements beyond `NO_COLOR`/`REDUCE_MOTION`.
 
 ## Reporting bugs
 

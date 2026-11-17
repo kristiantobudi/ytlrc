@@ -15,6 +15,27 @@ pub struct Theme {
     pub gauge_track: Color,
 }
 
+impl Theme {
+    /// Returns this theme with every color replaced by the terminal's
+    /// default, for `NO_COLOR` environments. Structure (bold/underline/active
+    /// vs past) is still conveyed through text modifiers, just not color.
+    pub fn no_color(self) -> Self {
+        Self {
+            name: self.name,
+            title: Color::Reset,
+            accent: Color::Reset,
+            text: Color::Reset,
+            past: Color::Reset,
+            hint: Color::Reset,
+            border: Color::Reset,
+            ok: Color::Reset,
+            warn: Color::Reset,
+            err: Color::Reset,
+            gauge_track: Color::Reset,
+        }
+    }
+}
+
 pub const THEMES: [Theme; 5] = [
     Theme {
         name: "Neon",
@@ -83,6 +104,22 @@ pub const THEMES: [Theme; 5] = [
     },
 ];
 
+/// `NO_COLOR` (<https://no-color.org>) disables ANSI color output. Ratatui
+/// still needs a `Color` value per cell, so "no color" maps every themed
+/// color to the terminal's own default (`Color::Reset`) instead of an RGB
+/// value — no escape codes are emitted for color, only for the bold/
+/// underline modifiers used to keep the active line distinguishable.
+pub fn no_color() -> bool {
+    std::env::var("NO_COLOR").is_ok_and(|value| !value.is_empty())
+}
+
+/// `REDUCE_MOTION` (informal convention mirroring the CSS media feature)
+/// disables the per-word karaoke bold+underline pulse, falling back to a
+/// single flat highlight for the active line.
+pub fn reduce_motion() -> bool {
+    std::env::var("REDUCE_MOTION").is_ok_and(|value| !value.is_empty())
+}
+
 /// Accept a theme name (case-insensitive) or a number 1–5.
 pub fn by_name(name: &str) -> Option<usize> {
     let wanted = name.trim().to_ascii_lowercase();
@@ -131,5 +168,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn no_color_variant_resets_every_color_but_keeps_the_name() {
+        let theme = THEMES[0].no_color();
+        assert_eq!(theme.name, THEMES[0].name);
+        assert_eq!(theme.accent, Color::Reset);
+        assert_eq!(theme.text, Color::Reset);
+        assert_eq!(theme.gauge_track, Color::Reset);
     }
 }
