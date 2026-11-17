@@ -1,0 +1,13 @@
+# winget manifest for ytlrc (manifest schema 1.6.0, multi-file layout).
+#
+# Validate locally:
+#   winget validate --manifest packaging/winget
+# Submit by opening a PR against https://github.com/microsoft/winget-pkgs
+# with these three files under
+# manifests/k/kristiantobudi/ytlrc/0.2.0/
+
+PackageIdentifier: kristiantobudi.ytlrc
+PackageVersion: 0.2.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

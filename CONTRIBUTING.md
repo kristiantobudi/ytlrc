@@ -83,7 +83,9 @@ Add a body when the change is not obvious. Reference issues with `Fixes #123`.
 - Additional lyrics providers (with a small, dependency-free HTTP layer).
 - More themes or a configurable theme file.
 - Better title parsing for non-English titles.
-- Packaging: Homebrew formula, Scoop manifest, AUR package, Nix flake.
+- Publishing the `packaging/` manifests (Homebrew tap, Scoop bucket, AUR,
+  winget) once release checksums are filled in — see
+  [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md#7-distribution-optional-but-effective).
 - Accessibility and terminal compatibility improvements.
 
 ## Reporting bugs

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- Package manager manifests: Homebrew formula, Scoop manifest, AUR
+  PKGBUILD, winget manifest, and a root `flake.nix` for Nix
+  (`packaging/`). Checksums are placeholders until filled in per
+  release — see `docs/GITHUB_SETUP.md`.
+
 ## [0.2.0] — 2026-11-17
 
 ### Added

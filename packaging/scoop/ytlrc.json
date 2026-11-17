@@ -1,0 +1,18 @@
+{
+    "//": "Scoop manifest for ytlrc. Install with: scoop install ./packaging/scoop/ytlrc.json  — or, once hosted in a bucket: scoop bucket add ytlrc https://github.com/kristiantobudi/scoop-ytlrc && scoop install ytlrc",
+    "version": "0.2.0",
+    "description": "Synced YouTube lyrics in your terminal",
+    "homepage": "https://github.com/kristiantobudi/ytlrc",
+    "license": "MIT",
+    "url": "https://github.com/kristiantobudi/ytlrc/releases/download/v0.2.0/ytlrc-windows-x86_64.exe",
+    "hash": "REPLACE_WITH_SHA256_OF_ytlrc-windows-x86_64.exe",
+    "bin": [["ytlrc-windows-x86_64.exe", "ytlrc"]],
+    "shortcuts": [],
+    "checkver": {
+        "url": "https://github.com/kristiantobudi/ytlrc/releases/latest",
+        "regex": "v([\\d.]+)"
+    },
+    "autoupdate": {
+        "url": "https://github.com/kristiantobudi/ytlrc/releases/download/v$version/ytlrc-windows-x86_64.exe"
+    }
+}

@@ -1,0 +1,37 @@
+# Maintainer: ytlrc contributors
+# PKGBUILD for ytlrc — synced YouTube lyrics in your terminal.
+#
+# Build and install locally with:
+#   cd packaging/aur && makepkg -si
+#
+# To publish to the AUR, this file (plus a generated .SRCINFO) goes into a
+# dedicated `ytlrc` AUR git repo: https://wiki.archlinux.org/title/AUR_submission_guidelines
+
+pkgname=ytlrc
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Synced YouTube lyrics in your terminal"
+arch=('x86_64')
+url="https://github.com/kristiantobudi/ytlrc"
+license=('MIT')
+depends=('curl' 'gcc-libs')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/kristiantobudi/ytlrc/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('REPLACE_WITH_SHA256_OF_SOURCE_TARBALL')
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --release --locked
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  cargo test --release --locked
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

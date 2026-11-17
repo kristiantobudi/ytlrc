@@ -1,0 +1,24 @@
+PackageIdentifier: kristiantobudi.ytlrc
+PackageVersion: 0.2.0
+PackageLocale: en-US
+Publisher: ytlrc contributors
+PackageName: ytlrc
+PackageUrl: https://github.com/kristiantobudi/ytlrc
+License: MIT
+LicenseUrl: https://github.com/kristiantobudi/ytlrc/blob/main/LICENSE
+ShortDescription: Synced YouTube lyrics in your terminal
+Description: >-
+  ytlrc shows synced YouTube lyrics in your terminal. A tiny Rust daemon plus
+  a Chrome/Edge extension detects the song playing on YouTube or YouTube
+  Music, looks it up on LRCLIB, and highlights the current line in a
+  terminal UI as the music plays. No API keys, no account, no audio
+  fingerprinting.
+Moniker: ytlrc
+Tags:
+  - youtube
+  - lyrics
+  - terminal
+  - tui
+  - music
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

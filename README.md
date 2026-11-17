@@ -158,6 +158,30 @@ static Linux binary on every push.
 
 ## Build and run
 
+### Package managers (early, SHA256s not yet published)
+
+The `packaging/` folder has ready-to-use manifests once a tagged release's
+checksums are filled in:
+
+```bash
+# Nix
+nix build .                       # or: nix run .
+
+# Homebrew (local formula file)
+brew install --formula ./packaging/homebrew/ytlrc.rb
+
+# Scoop (local manifest file)
+scoop install ./packaging/scoop/ytlrc.json
+
+# Arch Linux (builds from source)
+cd packaging/aur && makepkg -si
+```
+
+winget submission uses `packaging/winget/*.yaml` as a starting point for a PR
+against [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
+None of these are published to an official tap/bucket/repo yet — see
+[docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) for the publishing checklist.
+
 ### Windows (native, recommended)
 
 1. Install **Rust** (rustup) with the default MSVC toolchain.
@@ -462,7 +486,7 @@ of RAM, and has no runtime dependencies other than `curl`.
 ```
 ytlrc/
 ├─ .github/
-│  ├─ workflows/build.yml       # CI: test + build on Linux, macOS, Windows
+│  ├─ workflows/build.yml       # CI: fmt/clippy/audit/MSRV, test + build on Linux, macOS, Windows
 │  ├─ workflows/release.yml     # tagged releases with prebuilt binaries
 │  ├─ ISSUE_TEMPLATE/           # bug report / feature request forms
 │  └─ PULL_REQUEST_TEMPLATE.md
@@ -470,6 +494,12 @@ ytlrc/
 ├─ build.sh                     # Linux static / macOS native build
 ├─ build.ps1                    # Windows native build
 ├─ ytlrc.cmd                    # CMD launcher (native .exe or WSL)
+├─ flake.nix                    # Nix flake (`nix build` / `nix run`)
+├─ packaging/
+│  ├─ homebrew/ytlrc.rb         # Homebrew formula (tap or `brew install --formula`)
+│  ├─ scoop/ytlrc.json          # Scoop manifest
+│  ├─ aur/PKGBUILD              # Arch Linux AUR package
+│  └─ winget/                   # winget manifest (version/installer/locale)
 ├─ CHANGELOG.md
 ├─ CONTRIBUTING.md
 ├─ SECURITY.md

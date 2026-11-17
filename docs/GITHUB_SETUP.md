@@ -123,8 +123,42 @@ When adding screenshots/GIFs, always set descriptive alt text, for example:
   `awesome-youtube` style lists (follow each list’s contribution rules).
 - Post a short demo in r/rust, r/commandline, Hacker News “Show HN”, and
   r/youtube (check each community’s self-promotion rules).
-- Package for Homebrew, Scoop, AUR, and Nix to appear in package search.
 - Add the repository to your GitHub bio and link it from related discussions.
+
+### Package manager manifests
+
+Ready-to-use manifests live in `packaging/` and `flake.nix`, but none are
+published to an official tap/bucket/repo yet. After cutting a release:
+
+1. Compute the SHA256 of each release asset:
+
+   ```bash
+   gh release download v0.2.0 --repo kristiantobudi/ytlrc --pattern 'ytlrc-*'
+   sha256sum ytlrc-macos-arm64 ytlrc-macos-x86_64 ytlrc-windows-x86_64.exe
+   ```
+
+2. Replace every `REPLACE_WITH_SHA256_OF_*` placeholder in:
+   - `packaging/homebrew/ytlrc.rb` (both macOS binaries)
+   - `packaging/scoop/ytlrc.json`
+   - `packaging/winget/kristiantobudi.ytlrc.installer.yaml`
+   - `packaging/aur/PKGBUILD` (hash of the `v0.2.0` source tarball, not a
+     binary — `sha256sum` the file from
+     `https://github.com/kristiantobudi/ytlrc/archive/refs/tags/v0.2.0.tar.gz`)
+3. **Homebrew**: push `packaging/homebrew/ytlrc.rb` to a new
+   `kristiantobudi/homebrew-ytlrc` repo (Homebrew tap naming convention),
+   then `brew tap kristiantobudi/ytlrc && brew install ytlrc`.
+4. **Scoop**: push `packaging/scoop/ytlrc.json` to a new
+   `kristiantobudi/scoop-ytlrc` bucket repo, then
+   `scoop bucket add ytlrc https://github.com/kristiantobudi/scoop-ytlrc`.
+5. **AUR**: create the `ytlrc` AUR package (needs an Arch Linux account),
+   push `packaging/aur/PKGBUILD` plus a generated `.SRCINFO`
+   (`makepkg --printsrcinfo > .SRCINFO`).
+6. **winget**: open a PR against
+   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) adding
+   `manifests/k/kristiantobudi/ytlrc/0.2.0/` with the three
+   `packaging/winget/*.yaml` files (`winget validate` first).
+7. **Nix**: nothing to publish — `flake.nix` at the repo root already lets
+   anyone run `nix run github:kristiantobudi/ytlrc`.
 
 ## 8. Verify discoverability
 

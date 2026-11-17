@@ -157,6 +157,29 @@ binary Linux statis pada setiap push.
 
 ## Build dan jalankan
 
+### Package manager (awal, SHA256 belum dipublikasikan)
+
+Folder `packaging/` berisi manifest siap pakai setelah checksum rilis diisi:
+
+```bash
+# Nix
+nix build .                       # atau: nix run .
+
+# Homebrew (file formula lokal)
+brew install --formula ./packaging/homebrew/ytlrc.rb
+
+# Scoop (file manifest lokal)
+scoop install ./packaging/scoop/ytlrc.json
+
+# Arch Linux (build dari source)
+cd packaging/aur && makepkg -si
+```
+
+Submission winget memakai `packaging/winget/*.yaml` sebagai titik awal PR ke
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). Belum ada
+yang dipublikasikan ke tap/bucket/repo resmi — lihat
+[docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md) untuk checklist publikasinya.
+
 ### Windows (native, disarankan)
 
 1. Install **Rust** (rustup) dengan toolchain MSVC default.
