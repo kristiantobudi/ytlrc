@@ -12,6 +12,9 @@ All notable changes to this project are documented here. This project follows
   PKGBUILD, winget manifest, and a root `flake.nix` for Nix
   (`packaging/`). Checksums are placeholders until filled in per
   release — see `docs/GITHUB_SETUP.md`.
+- Repository automation: `.github/CODEOWNERS`, `release-drafter`
+  (auto-drafted release notes from merged PR labels), a PR auto-labeler
+  keyed on changed paths, and a `FUNDING.yml` placeholder.
 
 ## [0.2.0] — 2026-11-17
 
