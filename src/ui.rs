@@ -1,0 +1,1057 @@
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
+
+use ratatui::{
+    backend::CrosstermBackend,
+    crossterm::{
+        cursor,
+        event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    },
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, LineGauge, Padding, Paragraph, Wrap},
+    Frame, Terminal,
+};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+use crate::{
+    config,
+    lyrics::{
+        self,
+        cache::Cache,
+        lrc::{self, LyricLine},
+        title::{self, ParsedTrack},
+        FetchOutcome,
+    },
+    model::PlaybackState,
+    server::PlaybackRef,
+    theme::{self, Theme},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Synced,
+    Plain,
+}
+
+#[derive(Debug)]
+enum Event {
+    Lyrics { key: String, outcome: FetchOutcome },
+}
+
+#[derive(Debug, Default)]
+struct LyricsView {
+    loading: bool,
+    track: String,
+    artist: String,
+    synced: bool,
+    lines: Vec<LyricLine>,
+    offset_ms: i64,
+    plain: Option<String>,
+    status: String,
+    error: Option<String>,
+}
+
+struct App {
+    playback: PlaybackRef,
+    cache: Cache,
+    tx: UnboundedSender<Event>,
+    rx: UnboundedReceiver<Event>,
+    lyrics: LyricsView,
+    query: Option<ParsedTrack>,
+    last_key: Option<String>,
+    raw_title: String,
+    channel: Option<String>,
+    offset: f64,
+    mode: Mode,
+    plain_scroll: usize,
+    input: Option<String>,
+    toast: Option<(String, Instant)>,
+    ad: bool,
+    waiting: bool,
+    theme_index: usize,
+    failures: u32,
+    next_retry: Option<Instant>,
+    manual_lookup: bool,
+}
+
+impl App {
+    fn new(playback: PlaybackRef, cache: Cache, theme_override: Option<usize>) -> Self {
+        let (tx, rx) = unbounded_channel();
+        let stored_theme = config::load().theme.as_deref().and_then(theme::by_name);
+        let theme_index = theme_override
+            .or(stored_theme)
+            .unwrap_or(0)
+            .min(theme::THEMES.len() - 1);
+
+        if theme_override.is_some() {
+            config::save_theme(theme::THEMES[theme_index].name);
+        }
+
+        Self {
+            playback,
+            cache,
+            tx,
+            rx,
+            lyrics: LyricsView::default(),
+            query: None,
+            last_key: None,
+            raw_title: String::new(),
+            channel: None,
+            offset: 0.0,
+            mode: Mode::Synced,
+            plain_scroll: 0,
+            input: None,
+            toast: None,
+            ad: false,
+            waiting: true,
+            theme_index,
+            failures: 0,
+            next_retry: None,
+            manual_lookup: false,
+        }
+    }
+
+    fn theme(&self) -> Theme {
+        theme::THEMES[self.theme_index.min(theme::THEMES.len() - 1)]
+    }
+
+    fn set_theme(&mut self, index: usize) {
+        let index = index % theme::THEMES.len();
+        self.theme_index = index;
+        let name = theme::THEMES[index].name;
+        config::save_theme(name);
+        self.toast = Some((
+            format!("Tema {}/{}: {name}", index + 1, theme::THEMES.len()),
+            Instant::now(),
+        ));
+    }
+
+    fn poll_playback(&mut self) {
+        let snapshot = self.playback.lock().unwrap().clone();
+        let Some(state) = snapshot else {
+            self.waiting = true;
+            return;
+        };
+
+        self.waiting = state.received_at.elapsed().as_secs_f64() > 20.0;
+
+        if state.is_ad {
+            self.ad = true;
+            return;
+        }
+        self.ad = false;
+
+        let key = state.track_key();
+        if self.last_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+
+        self.last_key = Some(key.clone());
+        self.offset = 0.0;
+        self.plain_scroll = 0;
+        self.mode = Mode::Synced;
+        self.failures = 0;
+        self.next_retry = None;
+        self.manual_lookup = false;
+        self.raw_title = state.title.clone();
+        self.channel = state.channel.clone();
+
+        let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
+        // YouTube Music memberi artis yang sudah bersih di mediaSession.
+        if state.source.contains("music") {
+            if let Some(artist) = state
+                .artist
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                parsed.artist = artist.to_string();
+            }
+        }
+
+        self.query = Some(parsed.clone());
+        self.lyrics = LyricsView {
+            loading: true,
+            track: parsed.track.clone(),
+            artist: parsed.artist.clone(),
+            status: "mencari lirik…".to_string(),
+            ..Default::default()
+        };
+
+        self.start_fetch(
+            key,
+            parsed,
+            state.video_id.clone(),
+            state.duration,
+            true,
+            true,
+            state.title.clone(),
+            state.channel.clone(),
+        );
+    }
+
+    fn maybe_retry(&mut self) {
+        if self.manual_lookup || self.ad || self.waiting {
+            return;
+        }
+        let Some(retry_at) = self.next_retry else { return };
+        if Instant::now() < retry_at {
+            return;
+        }
+        self.next_retry = None;
+
+        let Some(key) = self.last_key.clone() else { return };
+        let Some(parsed) = self.query.clone() else { return };
+        let Some(state) = self.playback.lock().unwrap().clone() else { return };
+
+        self.lyrics.loading = true;
+        self.lyrics.error = None;
+        self.lyrics.status = "mencari ulang…".to_string();
+
+        self.start_fetch(
+            key,
+            parsed,
+            state.video_id.clone(),
+            state.duration,
+            false,
+            true,
+            self.raw_title.clone(),
+            self.channel.clone(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_fetch(
+        &self,
+        key: String,
+        parsed: ParsedTrack,
+        video_id: String,
+        duration: f64,
+        use_cache: bool,
+        deep: bool,
+        raw_title: String,
+        channel: Option<String>,
+    ) {
+        let cache = self.cache.clone();
+        let tx = self.tx.clone();
+
+        tokio::spawn(async move {
+            let request = lyrics::Lookup {
+                video_id: &video_id,
+                parsed: &parsed,
+                duration,
+                use_cache,
+                deep,
+                raw_title: &raw_title,
+                channel: channel.as_deref(),
+            };
+            let outcome = lyrics::fetch(&cache, &request).await;
+            let _ = tx.send(Event::Lyrics { key, outcome });
+        });
+    }
+
+    fn refetch(&mut self, use_cache: bool) {
+        let Some(parsed) = self.query.clone() else { return };
+        let Some(state) = self.playback.lock().unwrap().clone() else { return };
+        let Some(key) = self.last_key.clone() else { return };
+
+        if !use_cache {
+            self.cache
+                .invalidate(&Cache::key(&state.video_id, &parsed.artist, &parsed.track));
+        }
+
+        self.failures = 0;
+        self.next_retry = None;
+        self.lyrics.loading = true;
+        self.lyrics.error = None;
+        self.lyrics.status = "mencari lirik…".to_string();
+        self.start_fetch(
+            key,
+            parsed,
+            state.video_id.clone(),
+            state.duration,
+            use_cache,
+            true,
+            self.raw_title.clone(),
+            self.channel.clone(),
+        );
+        self.toast = Some(("Mengambil ulang lirik…".to_string(), Instant::now()));
+    }
+
+    fn submit_manual(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+
+        let Some(key) = self.last_key.clone() else {
+            self.toast = Some(("Belum ada lagu yang terdeteksi.".to_string(), Instant::now()));
+            return;
+        };
+
+        let mut parsed = title::parse_title(text, None);
+        if !text.contains(" - ") && !text.contains(" – ") && !text.contains(" — ") {
+            // Tanpa pemisah, biarkan pencarian bebas berdasarkan judul.
+            parsed.artist.clear();
+        }
+        self.query = Some(parsed.clone());
+        self.manual_lookup = true;
+        self.failures = 0;
+        self.next_retry = None;
+
+        let video_id = self
+            .playback
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|state| state.video_id.clone())
+            .unwrap_or_default();
+        let duration = self
+            .playback
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|state| state.duration)
+            .unwrap_or(0.0);
+
+        self.cache
+            .invalidate(&Cache::key(&video_id, &parsed.artist, &parsed.track));
+        self.lyrics = LyricsView {
+            loading: true,
+            track: parsed.track.clone(),
+            artist: parsed.artist.clone(),
+            status: "mencari lirik…".to_string(),
+            ..Default::default()
+        };
+        self.start_fetch(key, parsed, video_id, duration, false, true, text.to_string(), None);
+    }
+
+    fn on_event(&mut self, event: Event) {
+        let Event::Lyrics { key, outcome } = event;
+        if self.last_key.as_deref() != Some(key.as_str()) {
+            return;
+        }
+
+        match outcome {
+            FetchOutcome::Found(found) => {
+                let status = match (found.synced, found.cached) {
+                    (true, true) => "synced • cache",
+                    (true, false) => "synced",
+                    (false, true) => "plain • cache",
+                    (false, false) => "plain",
+                }
+                .to_string();
+
+                self.failures = 0;
+                self.next_retry = None;
+                self.mode = if found.synced { Mode::Synced } else { Mode::Plain };
+                self.plain_scroll = 0;
+                self.lyrics = LyricsView {
+                    loading: false,
+                    track: found.track,
+                    artist: found.artist,
+                    synced: found.synced,
+                    lines: found.lines,
+                    offset_ms: found.offset_ms,
+                    plain: found.plain,
+                    status,
+                    error: None,
+                };
+            }
+            FetchOutcome::NotFound(message) => {
+                self.schedule_retry();
+                let (track, artist) = self.query_labels();
+                self.lyrics = LyricsView {
+                    loading: false,
+                    track,
+                    artist,
+                    status: "tidak ditemukan".to_string(),
+                    error: Some(message),
+                    ..Default::default()
+                };
+            }
+            FetchOutcome::Error(message) => {
+                self.schedule_retry();
+                let (track, artist) = self.query_labels();
+                self.lyrics = LyricsView {
+                    loading: false,
+                    track,
+                    artist,
+                    status: "error".to_string(),
+                    error: Some(message),
+                    ..Default::default()
+                };
+            }
+        }
+    }
+
+    fn schedule_retry(&mut self) {
+        if self.manual_lookup {
+            return;
+        }
+        let delay = retry_delay(self.failures);
+        self.next_retry = Some(Instant::now() + Duration::from_secs(delay));
+        self.failures = self.failures.saturating_add(1);
+    }
+
+    fn query_labels(&self) -> (String, String) {
+        self.query
+            .as_ref()
+            .map(|query| (query.track.clone(), query.artist.clone()))
+            .unwrap_or_default()
+    }
+
+    /// `true` berarti keluar.
+    fn on_key(&mut self, key: KeyEvent) -> bool {
+        if self.input.is_some() {
+            let mut close = false;
+            let mut submit = None;
+
+            if let Some(buffer) = self.input.as_mut() {
+                match key.code {
+                    KeyCode::Esc => close = true,
+                    KeyCode::Enter => {
+                        submit = Some(buffer.clone());
+                        close = true;
+                    }
+                    KeyCode::Backspace => {
+                        buffer.pop();
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        buffer.clear();
+                    }
+                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        buffer.push(ch);
+                    }
+                    _ => {}
+                }
+            }
+
+            if close {
+                self.input = None;
+            }
+            if let Some(text) = submit {
+                self.submit_manual(&text);
+            }
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
+            KeyCode::Char('+') | KeyCode::Char('=') => self.offset += 0.25,
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                self.offset = (self.offset - 0.25).max(-30.0)
+            }
+            KeyCode::Char('0') => self.offset = 0.0,
+            KeyCode::Char('t') => self.set_theme(self.theme_index + 1),
+            KeyCode::Char(ch @ '1'..='5') => {
+                if let Some(index) = ch.to_digit(10) {
+                    self.set_theme(index as usize - 1);
+                }
+            }
+            KeyCode::Char('p') => {
+                if self.lyrics.synced {
+                    self.mode = match self.mode {
+                        Mode::Synced => Mode::Plain,
+                        Mode::Plain => Mode::Synced,
+                    };
+                }
+            }
+            KeyCode::Char('r') => self.refetch(false),
+            KeyCode::Char('m') => {
+                let seed = if self.lyrics.artist.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} - {}", self.lyrics.artist, self.lyrics.track)
+                };
+                self.input = Some(seed);
+            }
+            KeyCode::Up => self.plain_scroll = self.plain_scroll.saturating_sub(1),
+            KeyCode::Down => self.plain_scroll += 1,
+            KeyCode::PageUp => self.plain_scroll = self.plain_scroll.saturating_sub(10),
+            KeyCode::PageDown => self.plain_scroll += 10,
+            KeyCode::Home => self.plain_scroll = 0,
+            _ => {}
+        }
+
+        false
+    }
+
+    fn render(&self, frame: &mut Frame) {
+        let area = frame.area();
+        if area.height < 8 || area.width < 20 {
+            frame.render_widget(
+                Paragraph::new("Terminal terlalu kecil. Perbesar jendela."),
+                area,
+            );
+            return;
+        }
+
+        let state = self.playback.lock().unwrap().clone();
+        let chunks = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+        self.render_header(frame, chunks[0], state.as_ref());
+        self.render_lyrics(frame, chunks[1], state.as_ref());
+        self.render_footer(frame, chunks[2], state.as_ref());
+    }
+
+    fn status_text(&self) -> String {
+        if self.ad {
+            return "IKLAN".to_string();
+        }
+        if self.waiting {
+            return "MENUNGGU".to_string();
+        }
+
+        let mut status = self.lyrics.status.to_uppercase();
+        if let Some(retry_at) = self.next_retry {
+            let seconds = retry_at.saturating_duration_since(Instant::now()).as_secs();
+            status = format!("{status} · COBA LAGI {seconds}s");
+        }
+        status
+    }
+
+    fn status_color(&self) -> Color {
+        let theme = self.theme();
+        if self.ad || self.next_retry.is_some() {
+            return theme.warn;
+        }
+        if self.waiting {
+            return theme.hint;
+        }
+        if self.lyrics.error.is_some() {
+            return theme.err;
+        }
+        if self.lyrics.synced || self.lyrics.loading {
+            theme.ok
+        } else {
+            theme.text
+        }
+    }
+
+    fn render_header(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {
+        let theme = self.theme();
+        let (icon, title) = if self.ad {
+            ("▶", "IKLAN".to_string())
+        } else if !self.lyrics.track.is_empty() {
+            let icon = if state.map(|st| st.paused).unwrap_or(false) {
+                "❚❚"
+            } else {
+                "▶"
+            };
+            (
+                icon,
+                format!("{} — {}", self.lyrics.artist, self.lyrics.track),
+            )
+        } else if let Some(state) = state {
+            ("▶", state.title.clone())
+        } else {
+            ("·", "Menunggu YouTube…".to_string())
+        };
+
+        let status = self.status_text();
+        let status_color = self.status_color();
+
+        let left = format!("{icon} {title}");
+        let pad = area
+            .width
+            .saturating_sub(left.chars().count() as u16 + status.chars().count() as u16 + 2)
+            .max(0) as usize;
+
+        let mut subtitle = String::new();
+        if let Some(state) = state {
+            subtitle.push_str(&format!("{}  •  {}", state.source, state.video_id));
+            if state.paused {
+                subtitle.push_str("  •  dijeda");
+            }
+        } else {
+            subtitle.push_str("belum ada data dari browser extension");
+        }
+        if self.waiting && state.is_some() {
+            subtitle.push_str("  •  tidak ada update >20 detik");
+        }
+        subtitle.push_str(&format!("  •  tema {}", theme.name));
+
+        let header = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    left,
+                    Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" ".repeat(pad)),
+                Span::styled(
+                    status,
+                    Style::new()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(Span::styled(subtitle, Style::new().fg(theme.hint))),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::new().fg(theme.border)),
+        );
+
+        frame.render_widget(header, area);
+    }
+
+    fn render_lyrics(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {
+        let theme = self.theme();
+        let block = Block::default().padding(Padding::new(2, 2, 0, 0));
+
+        if self.ad {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "⏸  Iklan sedang diputar — lirik dijeda.",
+                        Style::new().fg(theme.warn),
+                    )),
+                ])
+                .block(block),
+                area,
+            );
+            return;
+        }
+
+        if self.waiting {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Menunggu YouTube…",
+                        Style::new()
+                            .fg(theme.title)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Buka youtube.com atau music.youtube.com, lalu pastikan extension",
+                        Style::new().fg(theme.hint),
+                    )),
+                    Line::from(Span::styled(
+                        "\"ytlrc bridge\" aktif dan daemon berjalan di port 8765.",
+                        Style::new().fg(theme.hint),
+                    )),
+                ])
+                .block(block),
+                area,
+            );
+            return;
+        }
+
+        if self.lyrics.loading {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("Mencari lirik: {} — {}", self.lyrics.artist, self.lyrics.track),
+                        Style::new().fg(theme.accent),
+                    )),
+                ])
+                .block(block),
+                area,
+            );
+            return;
+        }
+
+        if let Some(error) = &self.lyrics.error {
+            let retry_hint = match self.next_retry {
+                Some(retry_at) => {
+                    let seconds = retry_at.saturating_duration_since(Instant::now()).as_secs();
+                    format!(
+                        "Mencari ulang otomatis dalam {seconds} detik…  (r = sekarang, m = manual)"
+                    )
+                }
+                None => "Tekan r untuk ulangi atau m untuk cari manual.".to_string(),
+            };
+
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Lirik tidak ditemukan.",
+                        Style::new()
+                            .fg(theme.warn)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(error.clone(), Style::new().fg(theme.text))),
+                    Line::from(""),
+                    Line::from(Span::styled(retry_hint, Style::new().fg(theme.hint))),
+                ])
+                .wrap(Wrap { trim: true })
+                .block(block),
+                area,
+            );
+            return;
+        }
+
+        if self.mode == Mode::Synced && !self.lyrics.lines.is_empty() {
+            self.render_synced(frame, area, state, block);
+            return;
+        }
+
+        let lines = self.plain_lines();
+        if lines.is_empty() {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Lirik tidak tersedia.",
+                        Style::new().fg(theme.text),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Tekan r untuk ulangi atau m untuk cari manual.",
+                        Style::new().fg(theme.hint),
+                    )),
+                ])
+                .block(block),
+                area,
+            );
+            return;
+        }
+
+        let height = area.height as usize;
+        let start = self
+            .plain_scroll
+            .min(lines.len().saturating_sub(height).max(0));
+        let visible: Vec<Line> = lines
+            .iter()
+            .skip(start)
+            .take(height)
+            .map(|text| Line::from(Span::styled(text.clone(), Style::new().fg(theme.text))))
+            .collect();
+
+        frame.render_widget(Paragraph::new(visible).block(block), area);
+    }
+
+    fn render_synced(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        state: Option<&PlaybackState>,
+        block: Block,
+    ) {
+        let theme = self.theme();
+        let position = state.map(|st| st.position_now()).unwrap_or(0.0);
+        let pos_ms = (position * 1000.0).round() as i64
+            + (self.offset * 1000.0).round() as i64
+            + self.lyrics.offset_ms;
+
+        let active = lrc::active_index(&self.lyrics.lines, pos_ms);
+        let height = area.height as usize;
+        let anchor = (height * 2 / 5).max(1);
+        let start = match active {
+            Some(index) => {
+                let mut start = index.saturating_sub(anchor);
+                if start + height > self.lyrics.lines.len() {
+                    start = self.lyrics.lines.len().saturating_sub(height);
+                }
+                start
+            }
+            None => 0,
+        };
+
+        let lines: Vec<Line> = self
+            .lyrics
+            .lines
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(height)
+            .map(|(index, line)| {
+                let is_active = Some(index) == active;
+                let is_past = active.map(|active| index < active).unwrap_or(false);
+                let text = if line.text.trim().is_empty() {
+                    "♪".to_string()
+                } else {
+                    line.text.clone()
+                };
+                let style = if is_active {
+                    Style::new()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_past {
+                    Style::new().fg(theme.past)
+                } else {
+                    Style::new().fg(theme.text)
+                };
+                let prefix = if is_active { "▶ " } else { "  " };
+                Line::from(Span::styled(format!("{prefix}{text}"), style))
+            })
+            .collect();
+
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
+    fn render_footer(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {
+        let theme = self.theme();
+        let position = state.map(|st| st.position_now()).unwrap_or(0.0);
+        let duration = state.map(|st| st.duration).unwrap_or(0.0);
+        let ratio = if duration > 0.0 {
+            (position / duration).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        let label = format!(
+            "{} / {}   offset {:+.2}s",
+            format_time(position),
+            format_time(duration),
+            self.offset
+        );
+        let gauge = LineGauge::default()
+            .ratio(ratio)
+            .label(Line::from(Span::styled(
+                label,
+                Style::new().fg(theme.text),
+            )))
+            .filled_style(Style::new().fg(theme.accent))
+            .unfilled_style(Style::new().fg(theme.gauge_track));
+
+        let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(2)]).split(area);
+        frame.render_widget(gauge, rows[0]);
+
+        if let Some(buffer) = &self.input {
+            let text = format!("Cari lirik (Artis - Judul): {buffer}█");
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    text,
+                    Style::new().fg(theme.warn),
+                ))),
+                rows[1],
+            );
+            return;
+        }
+
+        let hint = if let Some((message, at)) = &self.toast {
+            if at.elapsed() < Duration::from_secs(4) {
+                message.clone()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let keys = if hint.is_empty() {
+            format!(
+                "q keluar · +/- offset · p synced/plain · t tema ({}) · r ulangi · m cari · ↑↓ scroll",
+                theme.name
+            )
+        } else {
+            hint
+        };
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(keys, Style::new().fg(theme.hint)))),
+            rows[1],
+        );
+    }
+
+    fn plain_lines(&self) -> Vec<String> {
+        if let Some(plain) = &self.lyrics.plain {
+            return plain.lines().map(|line| line.to_string()).collect();
+        }
+        if !self.lyrics.lines.is_empty() {
+            return self
+                .lyrics
+                .lines
+                .iter()
+                .map(|line| line.text.clone())
+                .collect();
+        }
+        Vec::new()
+    }
+}
+
+/// Jeda sebelum pencarian otomatis berikutnya (detik).
+fn retry_delay(failures: u32) -> u64 {
+    match failures {
+        0 => 8,
+        1 => 25,
+        2 => 90,
+        3 => 240,
+        _ => 300,
+    }
+}
+
+fn format_time(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return "00:00".to_string();
+    }
+    let total = seconds.round() as u64;
+    format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+    }
+}
+
+pub async fn run(
+    playback: PlaybackRef,
+    cache: Cache,
+    theme_override: Option<usize>,
+) -> anyhow::Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    let _guard = TerminalGuard;
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let mut app = App::new(playback, cache, theme_override);
+
+    loop {
+        app.poll_playback();
+        app.maybe_retry();
+        while let Ok(event) = app.rx.try_recv() {
+            app.on_event(event);
+        }
+
+        terminal.draw(|frame| app.render(frame))?;
+
+        if event::poll(Duration::from_millis(60))? {
+            if let CrosstermEvent::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press && app.on_key(key) {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Mode tanpa TUI: cetak baris lirik aktif ke stdout. Berguna untuk debugging
+/// dan untuk dipakai di script/streaming.
+pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()> {
+    let mut last_key: Option<String> = None;
+    let mut lyrics: Option<lyrics::FoundLyrics> = None;
+    let mut last_line: Option<String> = None;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let state = playback.lock().unwrap().clone();
+        let Some(state) = state else { continue };
+        if state.is_ad {
+            continue;
+        }
+
+        let key = state.track_key();
+        if last_key.as_deref() != Some(key.as_str()) {
+            last_key = Some(key);
+            last_line = None;
+
+            let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
+            if state.source.contains("music") {
+                if let Some(artist) = state
+                    .artist
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    parsed.artist = artist.to_string();
+                }
+            }
+
+            println!("\n▶ {}", state.title);
+            println!("  {} — {}", parsed.artist, parsed.track);
+
+            let request = lyrics::Lookup {
+                video_id: &state.video_id,
+                parsed: &parsed,
+                duration: state.duration,
+                use_cache: true,
+                deep: true,
+                raw_title: &state.title,
+                channel: state.channel.as_deref(),
+            };
+
+            match lyrics::fetch(&cache, &request).await {
+                FetchOutcome::Found(found) => {
+                    println!(
+                        "  [{}]{}",
+                        if found.synced { "synced" } else { "plain" },
+                        if found.cached { " (cache)" } else { "" }
+                    );
+                    if !found.synced {
+                        if let Some(plain) = &found.plain {
+                            println!();
+                            println!("{plain}");
+                        }
+                    }
+                    lyrics = Some(found);
+                }
+                FetchOutcome::NotFound(message) => {
+                    println!("  (lirik tidak ditemukan: {message})");
+                    lyrics = None;
+                }
+                FetchOutcome::Error(message) => {
+                    println!("  (error: {message})");
+                    lyrics = None;
+                }
+            }
+            println!();
+            continue;
+        }
+
+        let Some(found) = &lyrics else { continue };
+        if !found.synced {
+            continue;
+        }
+
+        let pos_ms = (state.position_now() * 1000.0).round() as i64 + found.offset_ms;
+        let Some(index) = lrc::active_index(&found.lines, pos_ms) else { continue };
+        let text = if found.lines[index].text.trim().is_empty() {
+            "♪".to_string()
+        } else {
+            found.lines[index].text.clone()
+        };
+        if last_line.as_deref() != Some(text.as_str()) {
+            print!("\r\x1b[K  ♪ {text}");
+            let _ = io::stdout().flush();
+            last_line = Some(text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_backoff_grows_and_caps() {
+        assert_eq!(retry_delay(0), 8);
+        assert_eq!(retry_delay(1), 25);
+        assert_eq!(retry_delay(2), 90);
+        assert_eq!(retry_delay(3), 240);
+        assert_eq!(retry_delay(4), 300);
+        assert_eq!(retry_delay(99), 300);
+    }
+}

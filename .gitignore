@@ -1,0 +1,4 @@
+/target
+/ytlrc
+*.log
+.DS_Store
