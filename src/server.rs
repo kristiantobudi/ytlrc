@@ -240,4 +240,155 @@ mod tests {
         assert!(!constant_time_eq(b"secret", b"secret "));
         assert!(!constant_time_eq(b"", b"secret"));
     }
+
+    // --- integration tests: exercise the real axum router end to end ---
+
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    fn app(token: Option<&str>) -> Router {
+        router(
+            Arc::new(Mutex::new(None)),
+            "test",
+            token.map(|value| value.to_string()),
+        )
+    }
+
+    async fn post(
+        app: Router,
+        path: &str,
+        body: serde_json::Value,
+        token: Option<&str>,
+    ) -> Response {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let request = builder.body(Body::from(body.to_string())).unwrap();
+        app.oneshot(request).await.unwrap()
+    }
+
+    async fn get(app: Router, path: &str, token: Option<&str>) -> Response {
+        let mut builder = Request::builder().method("GET").uri(path);
+        if let Some(token) = token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let request = builder.body(Body::empty()).unwrap();
+        app.oneshot(request).await.unwrap()
+    }
+
+    async fn json_body(response: Response) -> serde_json::Value {
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    fn sample_state(title: &str) -> serde_json::Value {
+        json!({
+            "videoId": "abc123",
+            "title": title,
+            "artist": "Someone",
+            "duration": 200.0,
+            "position": 10.0,
+            "paused": false,
+            "isAd": false,
+            "source": "youtube",
+        })
+    }
+
+    #[tokio::test]
+    async fn health_reports_no_state_before_any_update() {
+        let response = get(app(None), "/health", None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["hasState"], false);
+        assert_eq!(body["version"], "test");
+    }
+
+    #[tokio::test]
+    async fn post_state_then_get_state_round_trips() {
+        let app = app(None);
+        let response = post(app.clone(), "/state", sample_state("Song A"), None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["trackChanged"], true);
+
+        let response = get(app, "/state", None).await;
+        let body = json_body(response).await;
+        assert_eq!(body["title"], "Song A");
+    }
+
+    #[tokio::test]
+    async fn empty_state_is_rejected_with_bad_request() {
+        let response = post(
+            app(None),
+            "/state",
+            json!({ "videoId": "", "title": "" }),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_rejected() {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/state")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("not json"))
+            .unwrap();
+        let response = app(None).oneshot(request).await.unwrap();
+        assert!(response.status().is_client_error());
+    }
+
+    #[tokio::test]
+    async fn ad_freezes_track_but_accepts_a_real_track_change_during_the_ad() {
+        let app = app(None);
+        post(app.clone(), "/state", sample_state("Song A"), None).await;
+
+        // Ad starts: same track key, is_ad=true -> frozen, song position unchanged.
+        let mut ad_update = sample_state("Song A");
+        ad_update["isAd"] = json!(true);
+        let response = post(app.clone(), "/state", ad_update, None).await;
+        let body = json_body(response).await;
+        assert_eq!(body["ad"], true);
+
+        let response = get(app.clone(), "/state", None).await;
+        let body = json_body(response).await;
+        assert_eq!(body["title"], "Song A");
+
+        // Viewer skips to a new track while the ad plays: the new track wins.
+        let mut new_track_during_ad = sample_state("Song B");
+        new_track_during_ad["isAd"] = json!(true);
+        post(app.clone(), "/state", new_track_during_ad, None).await;
+
+        let response = get(app, "/state", None).await;
+        let body = json_body(response).await;
+        assert_eq!(body["title"], "Song B");
+    }
+
+    #[tokio::test]
+    async fn token_is_required_on_state_but_not_on_health() {
+        let app = app(Some("secret"));
+
+        let response = get(app.clone(), "/health", None).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "health never needs a token"
+        );
+
+        let response = get(app.clone(), "/state", None).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = get(app.clone(), "/state", Some("wrong")).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = get(app, "/state", Some("secret")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

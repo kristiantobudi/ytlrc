@@ -243,4 +243,46 @@ mod tests {
         assert_eq!(active_index(&lines, 3_000), Some(2));
         assert_eq!(active_index(&lines, 99_000), Some(2));
     }
+
+    #[test]
+    fn negative_offset_is_parsed() {
+        let lrc = parse("[offset:-150]\n[00:01.00] Line");
+        assert_eq!(lrc.offset_ms, -150);
+    }
+
+    #[test]
+    fn blank_and_whitespace_only_lines_are_ignored() {
+        let lrc = parse("[00:01.00] First\n\n   \n[00:02.00] Second");
+        assert_eq!(lrc.lines.len(), 2);
+        assert_eq!(lrc.lines[0].text, "First");
+        assert_eq!(lrc.lines[1].text, "Second");
+    }
+
+    #[test]
+    fn metadata_tags_are_stripped_and_do_not_produce_lines() {
+        let lrc = parse("[ar:Someone][ti:Title][al:Album][by:Author][re:App][ve:1.0][length:03:30]\n[00:01.00] Lyric");
+        assert_eq!(lrc.lines.len(), 1);
+        assert_eq!(lrc.lines[0].text, "Lyric");
+    }
+
+    #[test]
+    fn duplicate_timestamp_and_text_pairs_are_deduplicated() {
+        let lrc = parse("[00:01.00] Same\n[00:01.00] Same");
+        assert_eq!(lrc.lines.len(), 1);
+    }
+
+    #[test]
+    fn lines_are_sorted_by_timestamp_regardless_of_file_order() {
+        let lrc = parse("[00:05.00] Later\n[00:01.00] Earlier");
+        assert_eq!(lrc.lines[0].text, "Earlier");
+        assert_eq!(lrc.lines[1].text, "Later");
+    }
+
+    #[test]
+    fn word_tags_with_trailing_unclosed_tag_are_left_intact() {
+        // A malformed enhanced-LRC line (missing closing `>`) must not corrupt
+        // or silently swallow the rest of the text.
+        let lrc = parse("[00:01.00] <00:01.00>Hello <unterminated");
+        assert_eq!(lrc.lines[0].text, "Hello <unterminated");
+    }
 }

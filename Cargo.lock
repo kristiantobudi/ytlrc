@@ -1064,10 +1064,12 @@ dependencies = [
  "anyhow",
  "axum",
  "directories",
+ "http-body-util",
  "ratatui",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tower-http",
 ]
 
