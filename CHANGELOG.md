@@ -8,6 +8,14 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- Modernized TUI visuals: the header status becomes a solid-color
+  "pill" badge (black text on the status color) instead of plain
+  colored text, panel borders are rounded, upcoming lyric lines fade
+  gradually from text color toward the hint color based on distance
+  from the active line (static, not animated), and the footer
+  keybinding hint is rendered as `[key] label` chips with the key in
+  accent color. `NO_COLOR` falls back to bold-on-default instead of a
+  background fill for the badge.
 - Brief "✦ NEW" flash in the header (accent color, 1.5s) when a track
   starts, so a song change is visually obvious without a distracting
   continuous animation.
