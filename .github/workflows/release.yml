@@ -99,6 +99,34 @@ jobs:
           files: ytlrc-linux-arm64
           generate_release_notes: true
 
+  build-windows-msi:
+    name: ytlrc-windows-x86_64.msi
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Install WiX
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        run: wix build packaging/windows/ytlrc.wxs -o ytlrc-windows-x86_64.msi -d TargetDir=target/x86_64-pc-windows-msvc/release
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ytlrc-windows-x86_64.msi
+          generate_release_notes: true
+
   extension:
     name: extension bundle
     runs-on: ubuntu-latest

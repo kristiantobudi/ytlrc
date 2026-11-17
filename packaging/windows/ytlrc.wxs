@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX Toolset v4 source for the ytlrc MSI installer.
+
+  Build (requires WiX v4+: `dotnet tool install --global wix`):
+    wix build packaging/windows/ytlrc.wxs -o ytlrc.msi -d TargetDir=target/x86_64-pc-windows-msvc/release
+
+  This installs ytlrc.exe to Program Files and adds it to the user's PATH.
+  It is NOT code-signed — Windows SmartScreen will warn on first run until
+  a code-signing certificate is applied (see docs/GITHUB_SETUP.md).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="ytlrc"
+    Manufacturer="ytlrc contributors"
+    Version="0.2.0"
+    UpgradeCode="7c6e9a7e-3b1a-4b7e-9b3a-ytlrc00000001"
+    Scope="perUserOrMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ytlrc is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ytlrc" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="ytlrcExecutable" Guid="7c6e9a7e-3b1a-4b7e-9b3a-ytlrc00000002">
+        <File Id="ytlrcExe" Source="$(var.TargetDir)\ytlrc.exe" KeyPath="yes" />
+        <Environment Id="PathEnv" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no"
+                     Part="last" Action="set" System="no" />
+      </Component>
+      <Component Id="LicenseFile" Guid="7c6e9a7e-3b1a-4b7e-9b3a-ytlrc00000003">
+        <File Id="LicenseFile" Source="LICENSE" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="ytlrc" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Package>
+</Wix>
