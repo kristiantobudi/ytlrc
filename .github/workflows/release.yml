@@ -36,7 +36,7 @@ jobs:
             target: aarch64-pc-windows-msvc
             asset: ytlrc-windows-arm64.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -67,7 +67,7 @@ jobs:
           cp "$src" "${{ matrix.asset }}"
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
           generate_release_notes: true
@@ -131,7 +131,7 @@ jobs:
     name: extension bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Zip extension
         run: |
@@ -139,6 +139,6 @@ jobs:
           zip -r ../ytlrc-extension.zip .
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ytlrc-extension.zip
