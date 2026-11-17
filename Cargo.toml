@@ -8,7 +8,6 @@ authors = ["ytlrc contributors"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kristiantobudi/ytlrc"
-homepage = "https://github.com/kristiantobudi/ytlrc"
 keywords = ["youtube", "lyrics", "lrc", "tui", "music"]
 categories = ["command-line-utilities", "multimedia::audio"]
 

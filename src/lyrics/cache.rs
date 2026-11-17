@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 const FOUND_TTL_SECS: u64 = 60 * 60 * 24 * 30;
 /// "Not found" results are only cached briefly so they are retried soon.
 const MISS_TTL_SECS: u64 = 60 * 10;
+/// Upper bound for the cache directory; older files are dropped first.
+const MAX_FILES: usize = 500;
+/// Partially written files older than this are leftovers from a crash.
+const TMP_TTL_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -107,6 +111,63 @@ impl Cache {
         let _ = fs::remove_file(self.path(key));
     }
 
+    /// Housekeeping at startup: drop expired entries, crashed temp files, and
+    /// the oldest records above [`MAX_FILES`]. Returns the number of files
+    /// removed so the daemon can log it.
+    pub fn prune(&self) -> usize {
+        self.prune_at(now(), FOUND_TTL_SECS, MAX_FILES)
+    }
+
+    fn prune_at(&self, now: u64, max_age_secs: u64, max_files: usize) -> usize {
+        let Ok(read_dir) = fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let mut kept: Vec<(u64, PathBuf)> = Vec::new();
+        let mut removed = 0;
+
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let modified = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0);
+
+            match path.extension().and_then(|value| value.to_str()) {
+                Some("tmp") => {
+                    if now.saturating_sub(modified) > TMP_TTL_SECS && fs::remove_file(&path).is_ok()
+                    {
+                        removed += 1;
+                    }
+                }
+                Some("json") => {
+                    if now.saturating_sub(modified) > max_age_secs {
+                        if fs::remove_file(&path).is_ok() {
+                            removed += 1;
+                        }
+                    } else {
+                        kept.push((modified, path));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if kept.len() > max_files {
+            kept.sort_by_key(|(modified, _)| *modified);
+            let excess = kept.len() - max_files;
+            for (_, path) in kept.into_iter().take(excess) {
+                if fs::remove_file(path).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+
+        removed
+    }
+
     fn path(&self, key: &str) -> PathBuf {
         self.dir.join(format!("{key}.json"))
     }
@@ -160,5 +221,61 @@ mod tests {
             Cache::key("abc", "Channel A", "Hello"),
             Cache::key("abc", "Channel B", "Hello")
         );
+    }
+
+    use std::time::Duration;
+
+    fn temp_cache(name: &str) -> Cache {
+        let dir = std::env::temp_dir().join(format!(
+            "ytlrc-cache-test-{}-{name}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        Cache { dir }
+    }
+
+    fn write_file(cache: &Cache, name: &str, age_secs: u64) {
+        let path = cache.dir.join(name);
+        fs::write(&path, "{}").unwrap();
+        let modified = SystemTime::now() - Duration::from_secs(age_secs);
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    #[test]
+    fn prune_removes_expired_and_stale_tmp_files() {
+        let cache = temp_cache("expired");
+        write_file(&cache, "old.json", FOUND_TTL_SECS + 60);
+        write_file(&cache, "new.json", 60);
+        write_file(&cache, "leftover.tmp", TMP_TTL_SECS + 60);
+        write_file(&cache, "fresh.tmp", 5);
+
+        let removed = cache.prune_at(now(), FOUND_TTL_SECS, MAX_FILES);
+
+        assert_eq!(removed, 2);
+        assert!(!cache.dir.join("old.json").exists());
+        assert!(cache.dir.join("new.json").exists());
+        assert!(!cache.dir.join("leftover.tmp").exists());
+        assert!(cache.dir.join("fresh.tmp").exists());
+        let _ = fs::remove_dir_all(&cache.dir);
+    }
+
+    #[test]
+    fn prune_caps_file_count_and_keeps_newest() {
+        let cache = temp_cache("cap");
+        for index in 0..5 {
+            write_file(&cache, &format!("entry{index}.json"), 1000 - index * 10);
+        }
+
+        let removed = cache.prune_at(now(), FOUND_TTL_SECS, 2);
+
+        assert_eq!(removed, 3);
+        assert!(!cache.dir.join("entry0.json").exists());
+        assert!(cache.dir.join("entry3.json").exists());
+        assert!(cache.dir.join("entry4.json").exists());
+        let _ = fs::remove_dir_all(&cache.dir);
     }
 }

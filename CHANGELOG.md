@@ -19,6 +19,11 @@ All notable changes to this project are documented here. This project follows
 - CI matrix for Linux, macOS and Windows; release workflow with prebuilt
   binaries; issue/PR templates, contributing, security and code of conduct docs.
 - English and Indonesian documentation.
+- Optional API token (`--token` / `YTLRC_TOKEN`) for WSL and LAN bindings, plus
+  CORS restricted to YouTube and browser-extension origins.
+- Automatic retries in `--print` mode, matching the TUI backoff.
+- Startup cache maintenance: expired entries, stale temp files, and a 500-file
+  cap (oldest removed first).
 
 ### Changed
 

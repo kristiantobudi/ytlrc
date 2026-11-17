@@ -34,6 +34,9 @@ curl -s -X POST http://127.0.0.1:8765/state \
   -d '{"videoId":"dQw4w9WgXcQ","title":"Rick Astley - Never Gonna Give You Up (Official Video)","channel":"Rick Astley","duration":213,"position":83,"paused":false,"isAd":false,"source":"youtube"}'
 ```
 
+Add `-H 'Authorization: Bearer <secret>'` when the daemon was started with
+`--token <secret>`.
+
 ## Checks before opening a pull request
 
 ```bash

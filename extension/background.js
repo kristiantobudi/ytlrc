@@ -5,6 +5,10 @@
 const DAEMON_URL = "http://127.0.0.1:8765/state";
 const REQUEST_TIMEOUT_MS = 2500;
 
+// Must match `--token` (or YTLRC_TOKEN) on the daemon. Leave empty when the
+// daemon only listens on 127.0.0.1, which is the default.
+const TOKEN = "";
+
 // Focused tabs always win. A playing tab keeps ownership only while no other
 // tab has focus, so a paused or background tab can never overwrite the song
 // that is actually playing.
@@ -50,9 +54,12 @@ async function flush() {
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (TOKEN) headers.Authorization = `Bearer ${TOKEN}`;
+
     await fetch(DAEMON_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(state),
       signal: controller.signal,
     });

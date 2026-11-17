@@ -979,6 +979,8 @@ pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()
     let mut last_key: Option<String> = None;
     let mut lyrics: Option<lyrics::FoundLyrics> = None;
     let mut last_line: Option<String> = None;
+    let mut failures = 0u32;
+    let mut next_retry: Option<Instant> = None;
 
     loop {
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -993,58 +995,73 @@ pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()
         if last_key.as_deref() != Some(key.as_str()) {
             last_key = Some(key);
             last_line = None;
+            failures = 0;
+            next_retry = None;
 
-            let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
-            if state.source.contains("music") {
-                if let Some(artist) = state
-                    .artist
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    parsed.artist = artist.to_string();
-                }
-            }
-
+            let parsed = print_parse(&state);
             println!("\n▶ {}", state.title);
             println!("  {} — {}", parsed.artist, parsed.track);
 
-            let request = lyrics::Lookup {
-                video_id: &state.video_id,
-                parsed: &parsed,
-                duration: state.duration,
-                use_cache: true,
-                deep: true,
-                raw_title: &state.title,
-                channel: state.channel.as_deref(),
-            };
-
-            match lyrics::fetch(&cache, &request).await {
+            let outcome = print_fetch(&cache, &state, &parsed, true).await;
+            match outcome {
                 FetchOutcome::Found(found) => {
-                    println!(
-                        "  [{}]{}",
-                        if found.synced { "synced" } else { "plain" },
-                        if found.cached { " (cache)" } else { "" }
-                    );
-                    if !found.synced {
-                        if let Some(plain) = &found.plain {
-                            println!();
-                            println!("{plain}");
-                        }
-                    }
+                    print_found(&found);
                     lyrics = Some(found);
                 }
                 FetchOutcome::NotFound(message) => {
                     println!("  (lyrics not found: {message})");
                     lyrics = None;
+                    failures += 1;
+                    next_retry = Some(retry_at(failures));
+                    print_retry(next_retry);
                 }
                 FetchOutcome::Error(message) => {
                     println!("  (error: {message})");
                     lyrics = None;
+                    failures += 1;
+                    next_retry = Some(retry_at(failures));
+                    print_retry(next_retry);
                 }
             }
             println!();
             continue;
+        }
+
+        if lyrics.is_none() {
+            match next_retry {
+                Some(at) if Instant::now() >= at => {
+                    next_retry = None;
+                    let parsed = print_parse(&state);
+                    println!("  retrying…");
+
+                    let outcome = print_fetch(&cache, &state, &parsed, false).await;
+                    match outcome {
+                        FetchOutcome::Found(found) => {
+                            print_found(&found);
+                            lyrics = Some(found);
+                            failures = 0;
+                        }
+                        FetchOutcome::NotFound(message) => {
+                            println!("  (lyrics not found: {message})");
+                            failures += 1;
+                            next_retry = Some(retry_at(failures));
+                            print_retry(next_retry);
+                        }
+                        FetchOutcome::Error(message) => {
+                            println!("  (error: {message})");
+                            failures += 1;
+                            next_retry = Some(retry_at(failures));
+                            print_retry(next_retry);
+                        }
+                    }
+                    println!();
+                }
+                _ => {}
+            }
+
+            if lyrics.is_none() {
+                continue;
+            }
         }
 
         let Some(found) = &lyrics else { continue };
@@ -1066,6 +1083,64 @@ pub async fn run_print(playback: PlaybackRef, cache: Cache) -> anyhow::Result<()
             let _ = io::stdout().flush();
             last_line = Some(text);
         }
+    }
+}
+
+fn print_parse(state: &PlaybackState) -> ParsedTrack {
+    let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
+    if state.source.contains("music") {
+        if let Some(artist) = state
+            .artist
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            parsed.artist = artist.to_string();
+        }
+    }
+    parsed
+}
+
+async fn print_fetch(
+    cache: &Cache,
+    state: &PlaybackState,
+    parsed: &ParsedTrack,
+    use_cache: bool,
+) -> FetchOutcome {
+    let request = lyrics::Lookup {
+        video_id: &state.video_id,
+        parsed,
+        duration: state.duration,
+        use_cache,
+        deep: true,
+        raw_title: &state.title,
+        channel: state.channel.as_deref(),
+    };
+    lyrics::fetch(cache, &request).await
+}
+
+fn print_found(found: &lyrics::FoundLyrics) {
+    println!(
+        "  [{}]{}",
+        if found.synced { "synced" } else { "plain" },
+        if found.cached { " (cache)" } else { "" }
+    );
+    if !found.synced {
+        if let Some(plain) = &found.plain {
+            println!();
+            println!("{plain}");
+        }
+    }
+}
+
+fn retry_at(failures: u32) -> Instant {
+    Instant::now() + Duration::from_secs(retry_delay(failures.saturating_sub(1)))
+}
+
+fn print_retry(next_retry: Option<Instant>) {
+    if let Some(at) = next_retry {
+        let seconds = at.saturating_duration_since(Instant::now()).as_secs();
+        println!("  (retrying automatically in {seconds}s)");
     }
 }
 
