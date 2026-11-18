@@ -1,9 +1,11 @@
 pub mod cache;
 pub mod lrc;
 pub mod lrclib;
+pub mod provider;
 pub mod title;
 
 use cache::{Cache, CachedRecord, Entry};
+use provider::{Lrclib, Provider};
 use title::ParsedTrack;
 
 #[derive(Debug, Clone)]
@@ -36,6 +38,16 @@ pub struct Lookup<'a> {
 }
 
 pub async fn fetch(cache: &Cache, request: &Lookup<'_>) -> FetchOutcome {
+    fetch_with(&Lrclib, cache, request).await
+}
+
+/// Same as [`fetch`] but against an explicit provider — the seam
+/// [`provider::Provider`] exists for.
+pub async fn fetch_with<P: Provider>(
+    provider: &P,
+    cache: &Cache,
+    request: &Lookup<'_>,
+) -> FetchOutcome {
     let key = Cache::key(
         request.video_id,
         &request.parsed.artist,
@@ -64,9 +76,13 @@ pub async fn fetch(cache: &Cache, request: &Lookup<'_>) -> FetchOutcome {
 
     for (index, candidate) in candidates.iter().enumerate() {
         let result = if index == 0 {
-            lrclib::lookup(&candidate.artist, &candidate.track, request.duration).await
+            provider
+                .lookup(&candidate.artist, &candidate.track, request.duration)
+                .await
         } else {
-            lrclib::search(&candidate.artist, &candidate.track, request.duration).await
+            provider
+                .search(&candidate.artist, &candidate.track, request.duration)
+                .await
         };
 
         match result {
@@ -159,5 +175,101 @@ fn build(record: CachedRecord, cached: bool) -> FoundLyrics {
         offset_ms,
         plain,
         cached,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fake provider for exercising `fetch_with` without touching the
+    /// network — proves `Provider` is a usable seam, not just a trait that
+    /// compiles.
+    struct FakeProvider {
+        record: Option<lrclib::Record>,
+    }
+
+    impl Provider for FakeProvider {
+        async fn lookup(
+            &self,
+            _artist: &str,
+            _track: &str,
+            _duration: f64,
+        ) -> anyhow::Result<Option<lrclib::Record>> {
+            Ok(self.record.clone())
+        }
+
+        async fn search(
+            &self,
+            _artist: &str,
+            _track: &str,
+            _duration: f64,
+        ) -> anyhow::Result<Option<lrclib::Record>> {
+            Ok(self.record.clone())
+        }
+    }
+
+    fn lookup(video_id: &str, artist: &str, track: &str) -> (ParsedTrack, String) {
+        let parsed = ParsedTrack {
+            artist: artist.to_string(),
+            track: track.to_string(),
+        };
+        (parsed, video_id.to_string())
+    }
+
+    #[tokio::test]
+    async fn fetch_with_a_custom_provider_returns_its_synced_lyrics() {
+        let cache = cache::Cache::new().expect("cache dir");
+        let provider = FakeProvider {
+            record: Some(lrclib::Record {
+                id: 1,
+                track_name: "Song".to_string(),
+                artist_name: "Artist".to_string(),
+                instrumental: false,
+                plain_lyrics: Some("plain".to_string()),
+                synced_lyrics: Some("[00:01.00] line".to_string()),
+                duration: 0.0,
+            }),
+        };
+        let (parsed, video_id) = lookup("fake-video-provider-test", "Artist", "Song");
+        let request = Lookup {
+            video_id: &video_id,
+            parsed: &parsed,
+            duration: 0.0,
+            use_cache: false,
+            deep: false,
+            raw_title: "Artist - Song",
+            channel: None,
+        };
+
+        let outcome = fetch_with(&provider, &cache, &request).await;
+        match outcome {
+            FetchOutcome::Found(found) => {
+                assert!(found.synced);
+                assert_eq!(found.lines[0].text, "line");
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+        cache.invalidate(&cache::Cache::key(&video_id, "Artist", "Song"));
+    }
+
+    #[tokio::test]
+    async fn fetch_with_a_provider_that_finds_nothing_reports_not_found() {
+        let cache = cache::Cache::new().expect("cache dir");
+        let provider = FakeProvider { record: None };
+        let (parsed, video_id) = lookup("fake-video-provider-miss", "Nobody", "Nothing");
+        let request = Lookup {
+            video_id: &video_id,
+            parsed: &parsed,
+            duration: 0.0,
+            use_cache: false,
+            deep: false,
+            raw_title: "Nobody - Nothing",
+            channel: None,
+        };
+
+        let outcome = fetch_with(&provider, &cache, &request).await;
+        assert!(matches!(outcome, FetchOutcome::NotFound(_)));
+        cache.invalidate(&cache::Cache::key(&video_id, "Nobody", "Nothing"));
     }
 }

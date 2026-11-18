@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, LineGauge, Padding, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, LineGauge, Padding, Paragraph, Wrap},
     Frame, Terminal,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -80,12 +80,17 @@ struct App {
     manual_lookup: bool,
     /// Track key the current lyrics (or in-flight lookup) belong to.
     view_key: Option<String>,
+    keys: config::Keybindings,
+    /// When the current track started, used for the active-line pulse and
+    /// the brief "new track" flash in the header.
+    track_started: Instant,
 }
 
 impl App {
     fn new(playback: PlaybackRef, cache: Cache, theme_override: Option<usize>) -> Self {
         let (tx, rx) = unbounded_channel();
-        let stored_theme = config::load().theme.as_deref().and_then(theme::by_name);
+        let stored = config::load();
+        let stored_theme = stored.theme.as_deref().and_then(theme::by_name);
         let theme_index = theme_override
             .or(stored_theme)
             .unwrap_or(0)
@@ -117,11 +122,18 @@ impl App {
             next_retry: None,
             manual_lookup: false,
             view_key: None,
+            keys: stored.keybindings,
+            track_started: Instant::now(),
         }
     }
 
     fn theme(&self) -> Theme {
-        theme::THEMES[self.theme_index.min(theme::THEMES.len() - 1)]
+        let theme = theme::THEMES[self.theme_index.min(theme::THEMES.len() - 1)];
+        if theme::no_color() {
+            theme.no_color()
+        } else {
+            theme
+        }
     }
 
     fn set_theme(&mut self, index: usize) {
@@ -182,6 +194,7 @@ impl App {
         self.manual_lookup = false;
         self.raw_title = state.title.clone();
         self.channel = state.channel.clone();
+        self.track_started = Instant::now();
 
         let mut parsed = title::parse_title(&state.title, state.channel.as_deref());
         // YouTube Music exposes a clean artist name through mediaSession.
@@ -494,25 +507,25 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Char('+') | KeyCode::Char('=') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_up || ch == '=' => {
                 self.offset += 0.25;
                 self.persist_offset();
             }
-            KeyCode::Char('-') | KeyCode::Char('_') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_down || ch == '_' => {
                 self.offset = (self.offset - 0.25).max(-30.0);
                 self.persist_offset();
             }
-            KeyCode::Char('0') => {
+            KeyCode::Char(ch) if ch == self.keys.offset_reset => {
                 self.offset = 0.0;
                 self.persist_offset();
             }
-            KeyCode::Char('t') => self.set_theme(self.theme_index + 1),
+            KeyCode::Char(ch) if ch == self.keys.theme_next => self.set_theme(self.theme_index + 1),
             KeyCode::Char(ch @ '1'..='5') => {
                 if let Some(index) = ch.to_digit(10) {
                     self.set_theme(index as usize - 1);
                 }
             }
-            KeyCode::Char('p') => {
+            KeyCode::Char(ch) if ch == self.keys.toggle_mode => {
                 if self.lyrics.synced {
                     self.mode = match self.mode {
                         Mode::Synced => Mode::Plain,
@@ -520,8 +533,8 @@ impl App {
                     };
                 }
             }
-            KeyCode::Char('r') => self.refetch(false),
-            KeyCode::Char('m') => {
+            KeyCode::Char(ch) if ch == self.keys.refetch => self.refetch(false),
+            KeyCode::Char(ch) if ch == self.keys.manual_search => {
                 let seed = if self.lyrics.artist.is_empty() {
                     String::new()
                 } else {
@@ -597,6 +610,20 @@ impl App {
         }
     }
 
+    /// Solid "pill" background for the header status badge. Under
+    /// `NO_COLOR`, falls back to bold text on the terminal's default
+    /// background instead of a background fill — `Color::Reset` as a
+    /// background would just repaint whatever is already there.
+    fn status_badge_style(&self, theme: Theme, status_color: Color) -> Style {
+        if theme::no_color() {
+            return Style::new().fg(theme.text).add_modifier(Modifier::BOLD);
+        }
+        Style::new()
+            .fg(Color::Black)
+            .bg(status_color)
+            .add_modifier(Modifier::BOLD)
+    }
+
     fn render_header(&self, frame: &mut Frame, area: Rect, state: Option<&PlaybackState>) {
         let theme = self.theme();
         let (icon, title) = if self.ad {
@@ -619,11 +646,19 @@ impl App {
 
         let status = self.status_text();
         let status_color = self.status_color();
+        let is_new_track = !self.lyrics.track.is_empty()
+            && self.track_started.elapsed() < Duration::from_millis(1500);
 
-        let left = format!("{icon} {title}");
+        let title_text = format!("{icon} {title}");
+        let left = if is_new_track {
+            format!("{title_text}  ✦ NEW")
+        } else {
+            title_text.clone()
+        };
+        let status_badge = format!(" {status} ");
         let pad = area
             .width
-            .saturating_sub(left.chars().count() as u16 + status.chars().count() as u16 + 2)
+            .saturating_sub(left.chars().count() as u16 + status_badge.chars().count() as u16 + 1)
             as usize;
 
         let mut subtitle = String::new();
@@ -640,23 +675,40 @@ impl App {
         }
         subtitle.push_str(&format!("  •  theme {}", theme.name));
 
-        let header = Paragraph::new(vec![
-            Line::from(vec![
+        let left_spans = if is_new_track {
+            vec![
                 Span::styled(
-                    left,
+                    title_text,
                     Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" ".repeat(pad)),
                 Span::styled(
-                    status,
-                    Style::new().fg(status_color).add_modifier(Modifier::BOLD),
+                    "  ✦ NEW",
+                    Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
                 ),
-            ]),
+            ]
+        } else {
+            vec![Span::styled(
+                title_text,
+                Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
+            )]
+        };
+
+        let header = Paragraph::new(vec![
+            Line::from(
+                left_spans
+                    .into_iter()
+                    .chain([
+                        Span::raw(" ".repeat(pad)),
+                        Span::styled(status_badge, self.status_badge_style(theme, status_color)),
+                    ])
+                    .collect::<Vec<_>>(),
+            ),
             Line::from(Span::styled(subtitle, Style::new().fg(theme.hint))),
         ])
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(theme.border)),
         );
 
@@ -829,7 +881,7 @@ impl App {
                 let is_past = active.map(|active| index < active).unwrap_or(false);
                 let prefix = if is_active { "▶ " } else { "  " };
 
-                if is_active && !line.words.is_empty() {
+                if is_active && !line.words.is_empty() && !theme::reduce_motion() {
                     return self.render_karaoke_line(line, pos_ms, prefix, theme);
                 }
 
@@ -838,12 +890,15 @@ impl App {
                 } else {
                     line.text.clone()
                 };
+                let distance = active
+                    .map(|active| (index as isize - active as isize).unsigned_abs())
+                    .unwrap_or(0);
                 let style = if is_active {
                     Style::new().fg(theme.accent).add_modifier(Modifier::BOLD)
                 } else if is_past {
                     Style::new().fg(theme.past)
                 } else {
-                    Style::new().fg(theme.text)
+                    Style::new().fg(fade_toward_hint(theme, distance))
                 };
                 Line::from(Span::styled(format!("{prefix}{text}"), style))
             })
@@ -931,19 +986,46 @@ impl App {
             String::new()
         };
 
-        let keys = if hint.is_empty() {
-            format!(
-                "q quit · +/- offset · p synced/plain · t theme ({}) · r retry · m search · ↑↓ scroll",
-                theme.name
-            )
-        } else {
-            hint
-        };
+        if !hint.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(hint, Style::new().fg(theme.hint)))),
+                rows[1],
+            );
+            return;
+        }
 
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(keys, Style::new().fg(theme.hint)))),
-            rows[1],
-        );
+        let key_style = Style::new().fg(theme.accent).add_modifier(Modifier::BOLD);
+        let label_style = Style::new().fg(theme.hint);
+        let sep = Span::styled("  ", label_style);
+        let key = |ch: char| Span::styled(format!("[{ch}]"), key_style);
+        let label = |text: &'static str| Span::styled(text, label_style);
+
+        let spans = vec![
+            key('q'),
+            label(" quit"),
+            sep.clone(),
+            key(self.keys.offset_up),
+            Span::styled("/", label_style),
+            Span::styled(self.keys.offset_down.to_string(), key_style),
+            label(" offset"),
+            sep.clone(),
+            key(self.keys.toggle_mode),
+            label(" synced/plain"),
+            sep.clone(),
+            key(self.keys.theme_next),
+            Span::styled(format!(" theme ({})", theme.name), label_style),
+            sep.clone(),
+            key(self.keys.refetch),
+            label(" retry"),
+            sep.clone(),
+            key(self.keys.manual_search),
+            label(" search"),
+            sep,
+            Span::styled("[↑↓]", key_style),
+            label(" scroll"),
+        ];
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
     }
 
     fn plain_lines(&self) -> Vec<String> {
@@ -979,6 +1061,25 @@ fn format_time(seconds: f64) -> String {
     }
     let total = seconds.round() as u64;
     format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+/// Fades an upcoming lyric line's color from `theme.text` toward
+/// `theme.hint` the farther it is from the active line, capping at 4 lines
+/// away. Static (depends only on line distance, not time), so it adds depth
+/// without any animation.
+fn fade_toward_hint(theme: Theme, distance: usize) -> Color {
+    const MAX_STEPS: usize = 4;
+    let Color::Rgb(tr, tg, tb) = theme.text else {
+        return theme.text;
+    };
+    let Color::Rgb(hr, hg, hb) = theme.hint else {
+        return theme.text;
+    };
+    let t = distance.min(MAX_STEPS) as f64 / MAX_STEPS as f64;
+    let blend = |text: u8, hint: u8| -> u8 {
+        (text as f64 + (hint as f64 - text as f64) * t).round() as u8
+    };
+    Color::Rgb(blend(tr, hr), blend(tg, hg), blend(tb, hb))
 }
 
 struct TerminalGuard;
@@ -1211,5 +1312,23 @@ mod tests {
         assert_eq!(retry_delay(3), 240);
         assert_eq!(retry_delay(4), 300);
         assert_eq!(retry_delay(99), 300);
+    }
+
+    #[test]
+    fn fade_toward_hint_interpolates_from_text_to_hint() {
+        let theme = theme::THEMES[1]; // Dracula: text and hint are distinct RGB colors.
+        assert_eq!(fade_toward_hint(theme, 0), theme.text);
+        assert_eq!(fade_toward_hint(theme, 4), theme.hint);
+        assert_eq!(
+            fade_toward_hint(theme, 999),
+            theme.hint,
+            "distance caps at 4"
+        );
+    }
+
+    #[test]
+    fn fade_toward_hint_passes_through_non_rgb_colors_unchanged() {
+        let theme = theme::THEMES[4].no_color(); // Mono -> no_color() makes every field Color::Reset.
+        assert_eq!(fade_toward_hint(theme, 2), theme.text);
     }
 }

@@ -77,15 +77,21 @@ Regenerate or tweak it with PIL/any image editor and keep the 1280×640 size.
   pins).
 - Use a concise, descriptive release title, e.g. `v0.2.0 — reliable song switching
   + cross-platform builds`.
+- Enable **GitHub Pages** (Settings → Pages → Source: Deploy from a branch,
+  Branch: `main`, folder: `/docs`) to publish `docs/index.html` as a short demo
+  page at `https://kristiantobudi.github.io/ytlrc/`.
 
 ## 5. Releases
 
 The `release` workflow builds and attaches:
 
 - `ytlrc-linux-x86_64` (static musl)
+- `ytlrc-linux-arm64` (static musl)
 - `ytlrc-macos-arm64`
 - `ytlrc-macos-x86_64`
 - `ytlrc-windows-x86_64.exe`
+- `ytlrc-windows-x86_64.msi` (WiX installer, built from `packaging/windows/`)
+- `ytlrc-windows-arm64.exe`
 - `ytlrc-extension.zip`
 
 Cut a release:
@@ -159,6 +165,16 @@ published to an official tap/bucket/repo yet. After cutting a release:
    `packaging/winget/*.yaml` files (`winget validate` first).
 7. **Nix**: nothing to publish — `flake.nix` at the repo root already lets
    anyone run `nix run github:kristiantobudi/ytlrc`.
+
+### Windows MSI / code signing
+
+`ytlrc-windows-x86_64.msi` is built and attached automatically from
+`packaging/windows/ytlrc.wxs` (WiX v4) on every tagged release. It is **not
+code-signed**, so Windows SmartScreen will warn on first run — same as the
+plain `.exe`. To remove that warning, buy a code-signing certificate (EV
+certs avoid the SmartScreen reputation delay entirely) and sign both
+`ytlrc-windows-x86_64.exe` and the `.msi` in the release job with
+`signtool sign /fd SHA256 /a <file>` before the "Attach to release" step.
 
 ## 8. Verify discoverability
 

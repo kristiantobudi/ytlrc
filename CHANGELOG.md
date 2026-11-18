@@ -8,6 +8,30 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- Modernized TUI visuals: the header status becomes a solid-color
+  "pill" badge (black text on the status color) instead of plain
+  colored text, panel borders are rounded, upcoming lyric lines fade
+  gradually from text color toward the hint color based on distance
+  from the active line (static, not animated), and the footer
+  keybinding hint is rendered as `[key] label` chips with the key in
+  accent color. `NO_COLOR` falls back to bold-on-default instead of a
+  background fill for the badge.
+- Brief "✦ NEW" flash in the header (accent color, 1.5s) when a track
+  starts, so a song change is visually obvious without a distracting
+  continuous animation.
+- `docs/index.html`: a static GitHub Pages demo page (mock-up of the
+  TUI, feature grid, install snippet).
+- `NO_COLOR` (<https://no-color.org>) disables themed ANSI colors;
+  `REDUCE_MOTION` disables the per-word karaoke highlight animation.
+- Remappable single-key shortcuts (offset up/down/reset, theme next,
+  synced/plain toggle, refetch, manual search) via `keybindings` in
+  `config.json`.
+- `lyrics::provider::Provider` trait: the LRCLIB client is now the
+  default implementation behind a seam, so a second lyrics source can
+  be added without touching cache/orchestration logic.
+- ARM64 release binaries: `ytlrc-linux-arm64` (static musl) and
+  `ytlrc-windows-arm64.exe`, built on native GitHub-hosted ARM64
+  runners.
 - Package manager manifests: Homebrew formula, Scoop manifest, AUR
   PKGBUILD, winget manifest, and a root `flake.nix` for Nix
   (`packaging/`). Checksums are placeholders until filled in per
