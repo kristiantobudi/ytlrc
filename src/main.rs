@@ -153,7 +153,8 @@ fn print_help() {
          Usage:\n  ytlrc [options]\n\n\
          Options:\n  --print        no TUI, print the active lyric line (debug/scripts)\n  --bind <addr>  listen address (default 127.0.0.1; use 0.0.0.0 from WSL)\n  --port <port>  daemon port (default 8765)\n  --token <s>    require this token from clients (or set YTLRC_TOKEN)\n  --theme <t>    initial theme: {} — or a number from 1 to 5\n  -h, --help     show this help\n  -V, --version  show the version\n\n\
          Themes (switch while running):\n  t              next theme\n  1-5            pick a theme directly\n  Available: {}\n\n\
-         TUI keybindings:\n  q / Esc        quit\n  + / -          shift lyrics by 0.25 seconds\n  0              reset offset\n  p              toggle synced / plain\n  r              refetch lyrics now (bypass cache)\n  m              search manually \"Artist - Title\"\n  ↑ / ↓ / PgUp / PgDn  scroll in plain mode\n\n\
+         TUI keybindings (remappable in config.json, see 'Files and configuration' in the README):\n  q / Esc        quit\n  + / -          shift lyrics by 0.25 seconds\n  0              reset offset\n  p              toggle synced / plain\n  r              refetch lyrics now (bypass cache)\n  m              search manually \"Artist - Title\"\n  ↑ / ↓ / PgUp / PgDn  scroll in plain mode\n\n\
+         Accessibility environment variables:\n  NO_COLOR=1       disable themed colors (https://no-color.org)\n  REDUCE_MOTION=1  disable the per-word karaoke highlight animation\n\n\
          Automatic lookups: ytlrc searches for lyrics whenever the song changes.\n\
          If a lookup fails it keeps retrying on its own (8s, 25s, 90s, 240s, then\n\
          every 5 minutes) with different query strategies — no key press needed.\n\n\

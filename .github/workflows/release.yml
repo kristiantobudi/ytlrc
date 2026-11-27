@@ -9,6 +9,10 @@ permissions:
   contents: write
 
 jobs:
+  # Native ARM64 runners (ubuntu-24.04-arm, windows-11-arm) avoid needing a
+  # cross-compilation toolchain; GitHub provides them free for public repos.
+  # If a run fails with "no runner matching" your plan/repo visibility may
+  # not have ARM64 runners enabled yet — drop those matrix/job entries.
   build:
     name: ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
@@ -28,6 +32,9 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: ytlrc-windows-x86_64.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            asset: ytlrc-windows-arm64.exe
     steps:
       - uses: actions/checkout@v7
 
@@ -63,6 +70,61 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
+          generate_release_notes: true
+
+  build-linux-arm64:
+    name: ytlrc-linux-arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install static toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools lld
+
+      - name: Build
+        run: cargo build --release --locked --target aarch64-unknown-linux-musl
+
+      - name: Stage binary
+        run: cp target/aarch64-unknown-linux-musl/release/ytlrc ytlrc-linux-arm64
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ytlrc-linux-arm64
+          generate_release_notes: true
+
+  build-windows-msi:
+    name: ytlrc-windows-x86_64.msi
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Install WiX
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        run: wix build packaging/windows/ytlrc.wxs -o ytlrc-windows-x86_64.msi -d TargetDir=target/x86_64-pc-windows-msvc/release
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ytlrc-windows-x86_64.msi
           generate_release_notes: true
 
   extension:

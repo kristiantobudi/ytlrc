@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ytlrc — synced YouTube lyrics in your terminal</title>
+<meta name="description" content="ytlrc shows synced YouTube lyrics in your terminal. A tiny Rust daemon plus a Chrome/Edge extension, no API keys, no account, ~1.4 MB binary.">
+<link rel="icon" href="../extension/icons/icon32.png">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #11161d;
+    --border: #2a2f38;
+    --text: #cdd6d6;
+    --hint: #768888;
+    --accent: #bd93f9;
+    --accent2: #00ffd1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    line-height: 1.5;
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  h1 {
+    font-size: 2rem;
+    margin: 0 0 4px;
+    color: #f8f8f2;
+  }
+  .tagline {
+    color: var(--hint);
+    margin: 0 0 32px;
+    font-size: 1.05rem;
+  }
+  .badges { margin-bottom: 32px; }
+  .badges img { margin-right: 6px; }
+  .cta {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+  .cta a {
+    display: inline-block;
+    padding: 10px 18px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .cta .primary { background: var(--accent2); color: #04201c; }
+  .cta .secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+
+  .terminal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0;
+    overflow: hidden;
+    margin-bottom: 40px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .terminal-bar {
+    display: flex;
+    gap: 6px;
+    padding: 10px 14px;
+    background: #161b22;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.red { background: #ff5f56; }
+  .dot.yellow { background: #ffbd2e; }
+  .dot.green { background: #27c93f; }
+  .terminal-body {
+    padding: 18px 20px;
+    font-size: 0.92rem;
+    white-space: pre;
+  }
+  .row-header { color: #f8f8f2; font-weight: 700; }
+  .row-status { color: var(--accent2); font-weight: 700; }
+  .row-sub { color: var(--hint); }
+  .row-border { color: var(--border); }
+  .row-past { color: #62627a; }
+  .row-active {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .row-plain { color: var(--text); }
+  .row-footer { color: var(--hint); }
+
+  section { margin-bottom: 40px; }
+  h2 {
+    font-size: 1.2rem;
+    color: #f8f8f2;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 1rem; color: var(--accent2); }
+  .card p { margin: 0; color: var(--hint); font-size: 0.9rem; }
+
+  code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.88rem;
+  }
+  pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    font-size: 0.88rem;
+  }
+  footer {
+    color: var(--hint);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+  footer a { color: var(--accent2); }
+  a { color: var(--accent2); }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>ytlrc</h1>
+  <p class="tagline">Synced YouTube lyrics in your terminal. Tiny Rust daemon + Chrome/Edge extension. No API keys, no account, no audio fingerprinting, ~1.4&nbsp;MB binary.</p>
+
+  <div class="badges">
+    <img src="https://github.com/kristiantobudi/ytlrc/actions/workflows/build.yml/badge.svg" alt="CI status">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license">
+    <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Windows, macOS, Linux">
+  </div>
+
+  <div class="cta">
+    <a class="primary" href="https://github.com/kristiantobudi/ytlrc">View on GitHub</a>
+    <a class="secondary" href="https://github.com/kristiantobudi/ytlrc/releases/latest">Download latest release</a>
+    <a class="secondary" href="https://github.com/kristiantobudi/ytlrc#quick-start">Quick start</a>
+  </div>
+
+  <div class="terminal" aria-label="ytlrc terminal UI mock-up">
+    <div class="terminal-bar">
+      <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+    </div>
+    <div class="terminal-body"><span class="row-header">▶ Rick Astley — Never Gonna Give You Up  ✦ NEW</span>          <span class="row-status">SYNCED</span>
+<span class="row-sub">youtube • dQw4w9WgXcQ  •  theme Dracula</span>
+<span class="row-border">├───────────────────────────────────────────────────┤</span>
+<span class="row-past">        We're no strangers to love</span>
+<span class="row-past">        You know the rules and so do I</span>
+<span class="row-active">   ▶    A full commitment's what I'm thinking of</span>
+<span class="row-plain">        You wouldn't get this from any other guy</span>
+<span class="row-border">├───────────────────────────────────────────────────┤</span>
+<span class="row-footer">01:23 / 03:33   offset +0.00s</span>
+<span class="row-footer">q quit · +/- offset · p synced/plain · t theme · r retry · m search</span></div>
+  </div>
+
+  <section>
+    <h2>Why ytlrc?</h2>
+    <div class="grid">
+      <div class="card"><h3>No API keys</h3><p>LRCLIB is public. Nothing is uploaded except playback metadata, and only to 127.0.0.1 on your own machine.</p></div>
+      <div class="card"><h3>Lives in your terminal</h3><p>SSH, tmux, a tiling WM — anywhere a normal ratatui app runs.</p></div>
+      <div class="card"><h3>Tiny footprint</h3><p>~1.4&nbsp;MB static binary, ~10–15&nbsp;MB RAM. No runtime besides <code>curl</code>.</p></div>
+      <div class="card"><h3>Self-healing</h3><p>Automatic song-change detection, retries with backoff, and a stale-lyrics watchdog.</p></div>
+      <div class="card"><h3>Per-word karaoke</h3><p>When LRCLIB has enhanced LRC timing, the active line highlights word by word as it's sung.</p></div>
+      <div class="card"><h3>Accessible</h3><p><code>NO_COLOR=1</code> and <code>REDUCE_MOTION=1</code> are respected; keybindings are remappable.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Get it running</h2>
+    <pre><code># Linux / WSL (static binary)
+./build.sh &amp;&amp; ./ytlrc --bind 0.0.0.0
+
+# macOS
+./build.sh &amp;&amp; ./ytlrc
+
+# Windows (PowerShell)
+.\build.ps1; .\ytlrc.exe</code></pre>
+    <p>Then load the <code>extension/</code> folder as an unpacked Chrome/Edge extension and play something on YouTube. Full instructions are in the <a href="https://github.com/kristiantobudi/ytlrc#readme">README</a>.</p>
+  </section>
+
+  <footer>
+    ytlrc is open source under the <a href="https://github.com/kristiantobudi/ytlrc/blob/main/LICENSE">MIT license</a>.
+    This page is a static mock-up of the TUI, not a live daemon — install ytlrc locally to see your own lyrics.
+  </footer>
+
+</main>
+</body>
+</html>
