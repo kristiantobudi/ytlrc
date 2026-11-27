@@ -76,7 +76,7 @@ jobs:
     name: ytlrc-linux-arm64
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -94,7 +94,7 @@ jobs:
         run: cp target/aarch64-unknown-linux-musl/release/ytlrc ytlrc-linux-arm64
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ytlrc-linux-arm64
           generate_release_notes: true
@@ -104,7 +104,7 @@ jobs:
     runs-on: windows-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -122,7 +122,7 @@ jobs:
         run: wix build packaging/windows/ytlrc.wxs -o ytlrc-windows-x86_64.msi -d TargetDir=target/x86_64-pc-windows-msvc/release
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ytlrc-windows-x86_64.msi
           generate_release_notes: true
